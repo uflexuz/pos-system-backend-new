@@ -1,0 +1,282 @@
+// Prisma Schema — Hadya Backend
+// PostgreSQL structured tables
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== MODELS ====================
+
+model Admin {
+  @@map("admins")
+
+  id        String    @id
+  fullName  String?   @map("full_name")
+  phone     String?   @unique
+  password  String?
+  role      String    @default("admin")
+  isDeleted Boolean   @default(false) @map("is_deleted")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  managedBranches Branch[]      @relation("BranchManager")
+  transactions    Transaction[] @relation("TransactionCreator")
+}
+
+model Branch {
+  @@map("branches")
+
+  id        String   @id
+  name      String?
+  address   String?
+  phone     String?
+  managerId String?  @map("manager")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  manager     Admin?      @relation("BranchManager", fields: [managerId], references: [id])
+  inventories Inventory[]
+  sales       Sale[]
+  workers     Worker[]
+  tables      RestaurantTable[]
+}
+
+model Category {
+  @@map("categories")
+
+  id        String   @id
+  name      String?
+  key       String?  @unique
+  emoji     String?  @default("📦")
+  isActive  Boolean  @default(true) @map("is_active")
+  order     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  products Product[]
+}
+
+model Product {
+  @@map("products")
+
+  id            String   @id
+  name          String?
+  type          String?
+  categoryKey   String?  @map("category")
+  image         String?
+  sku           String?  @unique
+  unit          String?
+  salePrice     Decimal? @map("sale_price") @db.Decimal
+  workerPrice   Decimal? @map("worker_price") @db.Decimal
+  costPrice     Decimal? @map("cost_price") @db.Decimal
+  isUnlimited   Boolean  @default(false) @map("is_unlimited")
+  notes         String?
+  tags          Json     @default("[]")
+  ingredients   Json     @default("[]")
+  collaboration Json     @default("[]")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  category       Category?       @relation(fields: [categoryKey], references: [key])
+  inventoryItems InventoryItem[]
+  saleItems      SaleItem[]
+}
+
+model Ingredient {
+  @@map("ingredients")
+
+  id            String   @id
+  name          String?
+  unit          String?
+  purchasePrice Decimal? @map("purchase_price") @db.Decimal
+  currentStock  Decimal? @default(0) @map("current_stock") @db.Decimal
+  sku           String?
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+}
+
+model Inventory {
+  @@map("inventories")
+
+  id        String   @id
+  branchId  String   @map("branch")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  branch Branch          @relation(fields: [branchId], references: [id])
+  items  InventoryItem[]
+}
+
+model InventoryItem {
+  @@map("inventory_items")
+  @@unique([inventoryId, productId])
+
+  id          String   @id @default(cuid())
+  inventoryId String   @map("inventory_id")
+  productId   String   @map("product_id")
+  quantity    Decimal  @default(0) @db.Decimal
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  inventory Inventory @relation(fields: [inventoryId], references: [id])
+  product   Product   @relation(fields: [productId], references: [id])
+}
+
+model Worker {
+  @@map("workers")
+
+  id        String   @id
+  fullName  String?  @map("full_name")
+  phone     String?
+  password  String?
+  balance   Decimal  @default(0) @db.Decimal
+  role      String?
+  branchId  String?  @map("branch")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  branch     Branch? @relation(fields: [branchId], references: [id])
+  salesAsSeller Sale[] @relation("SaleSeller")
+  salesAsWaiter Sale[] @relation("SaleWaiter")
+}
+
+model RestaurantTable {
+  @@map("tables")
+
+  id          String   @id
+  tableNumber String?  @map("table_number")
+  capacity    Int      @default(4)
+  status      String   @default("available")
+  location    String?
+  branchId    String?  @map("branch")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  branch Branch? @relation(fields: [branchId], references: [id])
+  sales  Sale[]
+}
+
+model Customer {
+  @@map("customers")
+
+  id                      String   @id
+  fullName                String?  @map("full_name")
+  phone                   String?
+  birthDate               String?  @map("birth_date")
+  fatherBirthDate         String?  @map("father_birth_date")
+  motherBirthDate         String?  @map("mother_birth_date")
+  sonBirthDate            String?  @map("son_birth_date")
+  daughterBirthDate       String?  @map("daughter_birth_date")
+  spouseBirthDate         String?  @map("spouse_birth_date")
+  olderBrotherBirthDate   String?  @map("older_brother_birth_date")
+  youngerBrotherBirthDate String?  @map("younger_brother_birth_date")
+  olderSisterBirthDate    String?  @map("older_sister_birth_date")
+  youngerSisterBirthDate  String?  @map("younger_sister_birth_date")
+  favoriteHadyaItem       String?  @map("favorite_hadya_item")
+  followsHadyaSocial      String?  @map("follows_hadya_social")
+  shortcomings            String?
+  address                 String?
+  note                    String?
+  isActive                Boolean  @default(true) @map("is_active")
+  customAttributes        Json     @default("[]") @map("custom_attributes")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  sales Sale[]
+}
+
+model Sale {
+  @@map("sales")
+
+  id             String    @id
+  saleNumber     String?   @map("sale_number")
+  saleDate       DateTime? @map("sale_date") @db.Timestamptz
+  branchId       String?   @map("branch")
+  sellerId       String?   @map("seller")
+  waiterId       String?   @map("waiter")
+  tableId        String?   @map("table_number")
+  isTakeaway     Boolean   @default(false) @map("is_takeaway")
+  subtotal       Decimal?  @db.Decimal
+  total          Decimal?  @db.Decimal
+  discount       Decimal?  @default(0) @db.Decimal
+  discountType   String?   @map("discount_type")
+  tax            Boolean   @default(false)
+  taxAmount      Decimal?  @default(0) @map("tax_amount") @db.Decimal
+  taxPercent     Decimal?  @default(0) @map("tax_percent") @db.Decimal
+  paymentType    String?   @map("payment_type")
+  paymentDetails Json?     @map("payment_details")
+  status         String    @default("pending")
+  transactionId  String?   @map("transaction")
+  notes          String?
+  customerId     String?   @map("customer")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  branch      Branch?          @relation(fields: [branchId], references: [id])
+  seller      Worker?          @relation("SaleSeller", fields: [sellerId], references: [id])
+  waiterRef   Worker?          @relation("SaleWaiter", fields: [waiterId], references: [id])
+  table       RestaurantTable? @relation(fields: [tableId], references: [id])
+  customer    Customer?        @relation(fields: [customerId], references: [id])
+  transaction Transaction?     @relation(fields: [transactionId], references: [id])
+  items       SaleItem[]
+}
+
+model SaleItem {
+  @@map("sale_items")
+
+  id          String  @id @default(cuid())
+  saleId      String  @map("sale_id")
+  productId   String  @map("product_id")
+  productName String? @map("product_name")
+  quantity    Decimal @default(1) @db.Decimal
+  unitPrice   Decimal @default(0) @map("unit_price") @db.Decimal
+  totalPrice  Decimal @default(0) @map("total_price") @db.Decimal
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model Transaction {
+  @@map("transactions")
+
+  id          String   @id
+  type        String?
+  category    String?
+  amount      Decimal  @default(0) @db.Decimal
+  paymentType String?  @map("payment_type")
+  description String?
+  status      String   @default("completed")
+  createdById String?  @map("created_by")
+  worker      Json?
+  ingredient  Json?
+  ingredients Json?
+  inventory   Json?
+  inventories Json?
+  creditPaid  Decimal? @map("credit_paid") @db.Decimal
+  creditTotal Decimal? @map("credit_total") @db.Decimal
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  createdBy Admin? @relation("TransactionCreator", fields: [createdById], references: [id])
+  sales     Sale[]
+}

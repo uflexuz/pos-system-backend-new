@@ -1,0 +1,40 @@
+{
+  "name": "hadya-sklad-backend",
+  "version": "1.0.0",
+  "description": "backend for cafe hadya",
+  "main": "server.js",
+  "scripts": {
+    "prestart": "prisma generate",
+    "start": "node bootstrap.js",
+    "predev": "prisma generate",
+    "dev": "nodemon server.js",
+    "seed:ready-made-products": "node seeds/importReadyMadeProducts.js",
+    "seed:tea-products": "node seeds/seedTeaProducts.js",
+    "seed:cost-prices": "node seeds/updateProductCostPrices.js",
+    "fix:product-units": "node seeds/fixProductUnits.js",
+    "test:parser": "node tests/parserTests.js",
+    "seed:customers:csv": "node seeds/seedCustomersFromCsv.js ../mijoz.csv"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.6.0",
+    "@prisma/client": "^7.6.0",
+    "axios": "^1.9.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.18.2",
+    "form-data": "^4.0.5",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "pg": "^8.20.0",
+    "prisma": "^7.6.0",
+    "socket.io": "^4.8.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
