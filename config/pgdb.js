@@ -1,12 +1,57 @@
-const { Pool } = require('pg');
-require('dotenv').config();
+const { Pool } = require("pg");
+require("dotenv").config();
 
 const connectionString = process.env.PG_CONNECTION;
+const RAILWAY_PRIVATE_HOST_SUFFIX = ".railway.internal";
 
 let reconnectTimer = null;
+let railwayPrivateHostHintShown = false;
 
 if (!connectionString) {
-  throw new Error('PG_CONNECTION not set in .env');
+  throw new Error("PG_CONNECTION not set in .env");
+}
+
+function getConnectionHost() {
+  try {
+    return new URL(connectionString).hostname;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function usesRailwayPrivateHost() {
+  const host = getConnectionHost();
+  return (
+    host === "postgres.railway.internal" ||
+    host.endsWith(RAILWAY_PRIVATE_HOST_SUFFIX)
+  );
+}
+
+function isDnsNotFoundError(err) {
+  return err?.code === "ENOTFOUND" || err?.message?.includes("ENOTFOUND");
+}
+
+function getConnectionHint(err) {
+  if (!usesRailwayPrivateHost() || !isDnsNotFoundError(err)) {
+    return null;
+  }
+
+  return [
+    "PG_CONNECTION Railway private hostdan foydalanmoqda.",
+    "Bu host faqat Railway ichki tarmog'ida ishlaydi.",
+    "Lokal ishga tushirish uchun Railway Postgres public connection stringini PG_CONNECTION ga qo'ying.",
+    "Agar server Railway'da bo'lsa, Postgres service bir project/environment ichida ekanini tekshiring.",
+  ].join(" ");
+}
+
+function logConnectionError(prefix, err) {
+  console.error(prefix, err.message);
+
+  const hint = getConnectionHint(err);
+  if (hint && !railwayPrivateHostHintShown) {
+    console.error(hint);
+    railwayPrivateHostHintShown = true;
+  }
 }
 
 const pool = new Pool({
@@ -30,15 +75,15 @@ function startReconnectLoop() {
       client.release();
       clearInterval(reconnectTimer);
       reconnectTimer = null;
-      console.log('Postgres qayta ulandi');
+      console.log("Postgres qayta ulandi");
     } catch (err) {
-      console.error('Postgres reconnect kutilyapti:', err.message);
+      logConnectionError("Postgres reconnect kutilyapti:", err);
     }
   }, 5000);
 }
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle pg client:', err.message);
+  logConnectionError("Unexpected error on idle pg client:", err);
   // Pool avtomatik ravishda yangi connection yaratadi,
   // faqat log qilish kifoya
 });
@@ -47,9 +92,9 @@ const connect = async () => {
   try {
     const client = await pool.connect();
     client.release();
-    console.log('Postgres ga muvaffaqiyatli ulandi');
+    console.log("Postgres ga muvaffaqiyatli ulandi");
   } catch (err) {
-    console.error('Postgresga ulanishda xatolik:', err.message);
+    logConnectionError("Postgresga ulanishda xatolik:", err);
     startReconnectLoop();
   }
 };

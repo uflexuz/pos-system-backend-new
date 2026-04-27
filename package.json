@@ -1,7 +1,7 @@
 {
-  "name": "hadya-sklad-backend",
+  "name": "uflex-pos-backend",
   "version": "1.0.0",
-  "description": "backend for cafe hadya",
+  "description": "UFLEX POS backend",
   "main": "server.js",
   "scripts": {
     "prestart": "prisma generate",
@@ -12,13 +12,12 @@
     "seed:tea-products": "node seeds/seedTeaProducts.js",
     "seed:cost-prices": "node seeds/updateProductCostPrices.js",
     "fix:product-units": "node seeds/fixProductUnits.js",
-    "test:parser": "node tests/parserTests.js",
     "seed:customers:csv": "node seeds/seedCustomersFromCsv.js ../mijoz.csv"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.6.0",
     "@prisma/client": "^7.6.0",
-    "axios": "^1.9.0",
+    "axios": "^1.15.2",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
@@ -31,8 +30,7 @@
     "prisma": "^7.6.0",
     "socket.io": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.0",
-    "telegraf": "^4.16.3"
+    "swagger-ui-express": "^5.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

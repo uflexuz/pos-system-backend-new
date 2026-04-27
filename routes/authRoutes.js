@@ -85,6 +85,13 @@ async function handleAdminLogin(phone, password, res) {
     return res.status(401).json({ success: false, message: "Parol noto'g'ri!" });
   }
 
+  if (admin.role !== "admin") {
+    return res.status(403).json({
+      success: false,
+      message: "Admin panelga faqat admin role bilan kirish mumkin.",
+    });
+  }
+
   const token = jwt.sign(
     { adminId: admin.id, role: admin.role },
     process.env.JWT_SECRET,

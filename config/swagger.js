@@ -4,12 +4,11 @@ const options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "Hadya AI Inventory API",
+      title: "UFLEX POS API",
       version: "1.0.0",
-      description:
-        "AI-powered inventory management system via Telegram bot integration",
+      description: "UFLEX POS inventory and sales management API",
       contact: {
-        name: "Hadya Development Team",
+        name: "UFLEX Team",
       },
     },
     servers: [
@@ -18,14 +17,16 @@ const options = {
         description: "Development server",
       },
       {
-        url: "https://hadya-sklad-backend-production.up.railway.app",
+        url:
+          process.env.PUBLIC_BASE_URL ||
+          "https://pos-system-uflex.up.railway.app",
         description: "Production server",
       },
     ],
     tags: [
       {
-        name: "AI Inventory",
-        description: "AI Inventory management operations",
+        name: "Inventory",
+        description: "Inventory management operations",
       },
       {
         name: "Categories",
@@ -162,40 +163,40 @@ const options = {
             },
           },
         },
-        AIInventory: {
+        InventorySnapshot: {
           type: "object",
-          required: ["branchName", "aiItems"],
+          required: ["branchName", "items"],
           properties: {
             _id: {
               type: "string",
               description: "Inventory ID",
               example: "67912ab8123812390asd21",
             },
-            isAIGenerated: {
+            isGenerated: {
               type: "boolean",
-              description: "AI orqali yaratilganmi",
+              description: "Avtomatik yaratilganmi",
               example: true,
             },
             branchName: {
               type: "string",
               description: "Filial nomi",
-              example: "Hadya 1",
+              example: "UFLEX 1",
             },
-            aiItems: {
+            items: {
               type: "array",
               items: {
                 $ref: "#/components/schemas/InventoryItem",
               },
               description: "Mahsulotlar ro'yxati",
             },
-            telegramMessageId: {
+            sourceMessageId: {
               type: "number",
-              description: "Telegram xabar ID",
+              description: "Tashqi xabar ID",
               example: 12345,
             },
-            telegramChatId: {
+            sourceChatId: {
               type: "string",
-              description: "Telegram chat ID",
+              description: "Tashqi kanal ID",
               example: "-1002631455210",
             },
             createdBy: {
@@ -222,7 +223,7 @@ const options = {
             branch: {
               type: "string",
               description: "Filial nomi",
-              example: "Hadya 1",
+              example: "UFLEX 1",
             },
             items: {
               type: "array",
@@ -232,13 +233,13 @@ const options = {
               minItems: 1,
               description: "Mahsulotlar ro'yxati (kamida 1 ta)",
             },
-            telegramMessageId: {
+            sourceMessageId: {
               type: "number",
-              description: "Telegram xabar ID (ixtiyoriy)",
+              description: "Tashqi xabar ID (ixtiyoriy)",
             },
-            telegramChatId: {
+            sourceChatId: {
               type: "string",
-              description: "Telegram chat ID (ixtiyoriy)",
+              description: "Tashqi kanal ID (ixtiyoriy)",
             },
             createdBy: {
               type: "string",
@@ -258,7 +259,7 @@ const options = {
               example: "67912ab8123812390asd21",
             },
             data: {
-              $ref: "#/components/schemas/AIInventory",
+              $ref: "#/components/schemas/InventorySnapshot",
             },
           },
         },
@@ -285,7 +286,7 @@ const options = {
       },
     },
   },
-  apis: ["./routes/aiInventoryRoutes.js", "./routes/categoryRoutes.js"],
+  apis: ["./routes/categoryRoutes.js", "./routes/inventoryRoutes.js"],
 };
 
 const swaggerSpec = swaggerJsdoc(options);

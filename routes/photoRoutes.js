@@ -34,7 +34,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
     }
 
     const imageUrl = "/uploads/" + req.file.filename;
-    const { productName, productSku } = req.body;
+    const { productSku } = req.body;
     let productUpdated = false;
 
     if (productSku) {
@@ -44,7 +44,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
       if (product) {
         await prisma.product.update({
           where: { sku: productSku },
-          data: { image: imageUrl, updatedAt: new Date() },
+          data: { image: imageUrl },
         });
         productUpdated = true;
       }

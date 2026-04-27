@@ -2,10 +2,49 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
-const { postSaleMessage } = require("../config/tg");
 
 const router = express.Router();
 router.use(authMiddleware);
+
+const SALE_STATUSES = new Set(["completed", "cancelled"]);
+const SALE_PAYMENT_TYPES = new Set(["cash", "card", "mixed"]);
+
+function normalizeSalePayment(paymentType, paymentDetails, total) {
+  const normalizedPaymentType = paymentType || "cash";
+  const creditAmount = Number(paymentDetails?.credit || 0);
+
+  if (normalizedPaymentType === "credit" || creditAmount > 0) {
+    return { error: "Nasiya to'lov tizimdan olib tashlangan!" };
+  }
+
+  if (!SALE_PAYMENT_TYPES.has(normalizedPaymentType)) {
+    return { error: `Noto'g'ri to'lov turi: ${normalizedPaymentType}` };
+  }
+
+  if (normalizedPaymentType !== "mixed") {
+    return {
+      paymentType: normalizedPaymentType,
+      paymentDetails: null,
+    };
+  }
+
+  const mixedDetails = {
+    cash: Number(paymentDetails?.cash) || 0,
+    card: Number(paymentDetails?.card) || 0,
+  };
+  const mixedSum = mixedDetails.cash + mixedDetails.card;
+
+  if (Math.abs(mixedSum - total) > 1) {
+    return {
+      error: `Aralash to'lov summasi (${mixedSum}) jami to'lovga (${total}) teng emas!`,
+    };
+  }
+
+  return {
+    paymentType: normalizedPaymentType,
+    paymentDetails: mixedDetails,
+  };
+}
 
 function mapId(obj) {
   if (!obj) return obj;
@@ -40,10 +79,8 @@ function transformSale(sale) {
   if (mapped.branch) mapped.branch = mapId(mapped.branch);
   if (mapped.seller) mapped.seller = mapId(mapped.seller);
   if (mapped.waiterRef) mapped.waiterRef = mapId(mapped.waiterRef);
-  if (mapped.table) mapped.table = mapId(mapped.table);
   if (mapped.customer) mapped.customer = mapId(mapped.customer);
   mapped.waiter = mapped.waiterRef || mapped.waiterId || null;
-  mapped.tableNumber = mapped.table || mapped.tableId || null;
   return mapped;
 }
 
@@ -58,43 +95,25 @@ async function getRequesterBranchId(req) {
   return worker?.branchId || null;
 }
 
-// GET /by-table/:tableId — list sales by table for waiter/status pages
-router.get("/by-table/:tableId", async (req, res) => {
-  try {
-    const { tableId } = req.params;
-    const workerBranchId = await getRequesterBranchId(req);
+function applyStatusFilter(where, rawStatus) {
+  if (!rawStatus) return null;
 
-    const where = {
-      tableId,
-    };
+  const statuses = String(rawStatus)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-    if (workerBranchId) {
-      where.branchId = workerBranchId;
-    }
+  const invalid = statuses.find((status) => !SALE_STATUSES.has(status));
+  if (invalid) return `Noto'g'ri status: ${invalid}`;
 
-    if (req.query.status) {
-      where.status = req.query.status;
-    }
-
-    const sales = await prisma.sale.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        items: { include: { product: true } },
-        branch: true,
-        seller: true,
-        waiterRef: true,
-        table: true,
-        customer: true,
-      },
-    });
-
-    return res.json({ sales: sales.map(transformSale) });
-  } catch (error) {
-    console.error("Get sales by table error:", error.message);
-    return res.status(500).json({ message: "Server xatoligi!" });
+  if (statuses.length === 1) {
+    where.status = statuses[0];
+  } else if (statuses.length > 1) {
+    where.status = { in: statuses };
   }
-});
+
+  return null;
+}
 
 // GET / — List sales with pagination and filters
 router.get("/", async (req, res) => {
@@ -106,15 +125,10 @@ router.get("/", async (req, res) => {
     const where = {};
     if (req.query.branch) where.branchId = req.query.branch;
     if (req.query.waiter) where.waiterId = req.query.waiter;
-    if (req.query.status) {
-      const statuses = req.query.status.split(",").map((s) => s.trim()).filter(Boolean);
-      if (statuses.length === 1) {
-        where.status = statuses[0];
-      } else if (statuses.length > 1) {
-        where.status = { in: statuses };
-      }
+    const statusError = applyStatusFilter(where, req.query.status);
+    if (statusError) {
+      return res.status(400).json({ message: statusError });
     }
-    if (req.query.tableId) where.tableId = req.query.tableId;
     if (req.query.paymentType) where.paymentType = req.query.paymentType;
     if (req.query.search) {
       where.OR = [
@@ -143,7 +157,6 @@ router.get("/", async (req, res) => {
           branch: true,
           seller: true,
           waiterRef: true,
-          table: true,
           customer: true,
         },
       }),
@@ -200,7 +213,6 @@ const fullSaleInclude = {
   branch: true,
   seller: true,
   waiterRef: true,
-  table: true,
   customer: true,
 };
 
@@ -227,7 +239,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const {
-      branchId, sellerId, waiterId, tableNumber, isTakeaway,
+      branchId, sellerId, waiterId,
       items, discount, discountType, paymentType, paymentDetails,
       tax, taxPercent, taxAmount, notes, saleDate, customerId,
     } = req.body;
@@ -240,7 +252,7 @@ router.post("/", async (req, res) => {
     const productIds = items.map((i) => i.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, name: true, salePrice: true, costPrice: true, isUnlimited: true },
+      select: { id: true, name: true, salePrice: true, costPrice: true },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
@@ -268,16 +280,9 @@ router.post("/", async (req, res) => {
     const discountAmount = discount || 0;
     const total = Math.max(0, Math.round(subtotalWithTax - discountAmount));
 
-    // Validate mixed payment sum
-    if (paymentType === "mixed" && paymentDetails) {
-      const mixedSum = (Number(paymentDetails.cash) || 0)
-        + (Number(paymentDetails.card) || 0)
-        + (Number(paymentDetails.credit) || 0);
-      if (Math.abs(mixedSum - total) > 1) {
-        return res.status(400).json({
-          message: `Aralash to'lov summasi (${mixedSum}) jami to'lovga (${total}) teng emas!`,
-        });
-      }
+    const paymentData = normalizeSalePayment(paymentType, paymentDetails, total);
+    if (paymentData.error) {
+      return res.status(400).json({ message: paymentData.error });
     }
 
     const saleNumber = await generateSaleNumber();
@@ -291,8 +296,6 @@ router.post("/", async (req, res) => {
         branchId: branchId || null,
         sellerId: sellerId || null,
         waiterId: waiterId || null,
-        tableId: tableNumber || null,
-        isTakeaway: isTakeaway || false,
         subtotal,
         total,
         discount: discountAmount,
@@ -300,9 +303,9 @@ router.post("/", async (req, res) => {
         tax: tax || false,
         taxAmount: finalTaxAmount,
         taxPercent: taxPercent || 0,
-        paymentType: paymentType || "cash",
-        paymentDetails: paymentDetails || null,
-        status: isTakeaway ? "completed" : "pending",
+        paymentType: paymentData.paymentType,
+        paymentDetails: paymentData.paymentDetails,
+        status: "completed",
         notes: notes || null,
         customerId: customerId || null,
         items: {
@@ -311,14 +314,6 @@ router.post("/", async (req, res) => {
       },
       include: fullSaleInclude,
     });
-
-    // Update table status if assigned
-    if (tableNumber && !isTakeaway) {
-      await prisma.restaurantTable.update({
-        where: { id: tableNumber },
-        data: { status: "occupied" },
-      }).catch(() => {});
-    }
 
     // Deduct inventory
     if (branchId) {
@@ -329,51 +324,6 @@ router.post("/", async (req, res) => {
 
     const transformed = transformSale(sale);
     emitSaleEvent(req, "new_sale", transformed);
-
-    // Takeaway uchun telegram xabar yuborish (avtomatik yopilgan)
-    if (isTakeaway) {
-      try {
-        const branchName = sale.branch?.name || "—";
-        const sellerName = sale.seller?.fullName || "—";
-        const payLabel = {
-          cash: "💵 Naqd",
-          card: "💳 Karta",
-          credit: "📝 Nasiya",
-          mixed: "🔀 Aralash",
-        }[sale.paymentType] || sale.paymentType;
-
-        const itemLines = (sale.items || []).map((item, i) => {
-          const name = item.product?.name || "Noma'lum";
-          const qty = Number(item.quantity);
-          const price = Number(item.totalPrice || 0);
-          return `  ${i + 1}. ${name} × ${qty} = ${price.toLocaleString("uz")} so'm`;
-        }).join("\n");
-
-        const discountLine = Number(sale.discount || 0) > 0
-          ? `\n🏷 Chegirma: ${Number(sale.discount).toLocaleString("uz")} so'm`
-          : "";
-
-        const msg = [
-          `✅ <b>Soboy</b>`,
-          ``,
-          `🏢 Filial: <b>${branchName}</b>`,
-          `👤 Sotuvchi: ${sellerName}`,
-          ``,
-          `📋 <b>Mahsulotlar:</b>`,
-          itemLines,
-          discountLine,
-          ``,
-          `💰 <b>Jami: ${total.toLocaleString("uz")} so'm</b>`,
-          `💳 To'lov: ${payLabel}`,
-        ].filter(Boolean).join("\n");
-
-        postSaleMessage(msg).catch((err) =>
-          console.error("Telegram takeaway message error:", err.message)
-        );
-      } catch (tgErr) {
-        console.error("Telegram takeaway notification error:", tgErr.message);
-      }
-    }
 
     return res.status(201).json({ success: true, sale: transformed });
   } catch (error) {
@@ -473,14 +423,26 @@ router.patch("/:id/status", async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ["pending", "cooked", "ready", "served", "completed", "cancelled"];
-    if (!validStatuses.includes(status)) {
+    if (!SALE_STATUSES.has(status)) {
       return res.status(400).json({ message: `Noto'g'ri status: ${status}` });
     }
 
-    const sale = await prisma.sale.findUnique({ where: { id } });
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      include: { items: true },
+    });
     if (!sale) {
       return res.status(404).json({ message: "Sotuv topilmadi!" });
+    }
+
+    if (sale.status === "cancelled" && status === "completed") {
+      return res.status(400).json({ message: "Bekor qilingan sotuvni qayta tugallash mumkin emas!" });
+    }
+
+    if (sale.status !== "cancelled" && status === "cancelled" && sale.branchId) {
+      await restoreInventory(sale.branchId, sale.items).catch((err) =>
+        console.error("Inventory restore (status cancel) error:", err.message)
+      );
     }
 
     const updated = await prisma.sale.update({
@@ -536,24 +498,29 @@ router.post("/:id/close", async (req, res) => {
 
     const total = Math.max(0, Math.round(subtotalWithTax - discountAmount));
 
-    // Validate mixed payment sum
-    if (paymentType === "mixed" && paymentDetails) {
-      const mixedSum = (Number(paymentDetails.cash) || 0)
-        + (Number(paymentDetails.card) || 0)
-        + (Number(paymentDetails.credit) || 0);
-      if (Math.abs(mixedSum - total) > 1) {
-        return res.status(400).json({
-          message: `Aralash to'lov summasi (${mixedSum}) jami to'lovga (${total}) teng emas!`,
-        });
-      }
+    const defaultPaymentType = sale.paymentType === "credit" ? "cash" : sale.paymentType;
+    const nextPaymentType = paymentType || defaultPaymentType || "cash";
+    const nextPaymentDetails =
+      paymentDetails !== undefined
+        ? paymentDetails
+        : nextPaymentType === "mixed"
+        ? sale.paymentDetails
+        : null;
+    const paymentData = normalizeSalePayment(
+      nextPaymentType,
+      nextPaymentDetails,
+      total
+    );
+    if (paymentData.error) {
+      return res.status(400).json({ message: paymentData.error });
     }
 
     const updated = await prisma.sale.update({
       where: { id },
       data: {
         status: "completed",
-        paymentType: paymentType || sale.paymentType || "cash",
-        paymentDetails: paymentDetails || sale.paymentDetails,
+        paymentType: paymentData.paymentType,
+        paymentDetails: paymentData.paymentDetails,
         discount: discountAmount,
         discountType: finalDiscountType === "percent" ? "percent" : "amount",
         tax: finalTax,
@@ -564,24 +531,6 @@ router.post("/:id/close", async (req, res) => {
       },
       include: fullSaleInclude,
     });
-
-    // Free table if assigned
-    if (sale.tableId && !sale.isTakeaway) {
-      // Check if there are other active sales on this table
-      const otherActive = await prisma.sale.count({
-        where: {
-          tableId: sale.tableId,
-          id: { not: id },
-          status: { notIn: ["completed", "cancelled"] },
-        },
-      });
-      if (otherActive === 0) {
-        await prisma.restaurantTable.update({
-          where: { id: sale.tableId },
-          data: { status: "available" },
-        }).catch(() => {});
-      }
-    }
 
     const transformed = transformSale(updated);
     emitSaleEvent(req, "sale_status_changed", transformed);
@@ -599,53 +548,6 @@ router.post("/:id/close", async (req, res) => {
       } catch (balanceErr) {
         console.error("Waiter balance update error:", balanceErr.message);
       }
-    }
-
-    // Telegram ga yopilgan sotuv haqida xabar yuborish
-    try {
-      const branchName = updated.branch?.name || "—";
-      const sellerName = updated.seller?.fullName || "—";
-      const waiterName = updated.waiterRef?.fullName || null;
-      const tableName = updated.table?.tableNumber || updated.table?.id || null;
-      const payLabel = {
-        cash: "💵 Naqd",
-        card: "💳 Karta",
-        credit: "📝 Nasiya",
-        mixed: "🔀 Aralash",
-      }[updated.paymentType] || updated.paymentType;
-
-      const itemLines = (updated.items || []).map((item, i) => {
-        const name = item.product?.name || "Noma'lum";
-        const qty = Number(item.quantity);
-        const price = Number(item.totalPrice || 0);
-        return `  ${i + 1}. ${name} × ${qty} = ${price.toLocaleString("uz")} so'm`;
-      }).join("\n");
-
-      const discountLine = Number(updated.discount || 0) > 0
-        ? `\n🏷 Chegirma: ${Number(updated.discount).toLocaleString("uz")} so'm`
-        : "";
-
-      const msg = [
-        `✅ <b>${updated.isTakeaway ? 'Soboy' : 'Sotuv yopildi'}</b>`,
-        ``,
-        `🏢 Filial: <b>${branchName}</b>`,
-        `👤 Sotuvchi: ${sellerName}`,
-        waiterName ? `🧑‍🍳 Afitsant: ${waiterName}` : null,
-        tableName ? `🪑 Stol: ${tableName}` : null,
-        ``,
-        `📋 <b>Mahsulotlar:</b>`,
-        itemLines,
-        discountLine,
-        ``,
-        `💰 <b>Jami: ${total.toLocaleString("uz")} so'm</b>`,
-        `💳 To'lov: ${payLabel}`,
-      ].filter(Boolean).join("\n");
-
-      postSaleMessage(msg).catch((err) =>
-        console.error("Telegram sale message error:", err.message)
-      );
-    } catch (tgErr) {
-      console.error("Telegram sale notification error:", tgErr.message);
     }
 
     return res.json({ success: true, sale: transformed });
@@ -689,23 +591,6 @@ router.post("/:id/cancel", async (req, res) => {
       );
     }
 
-    // Free table if assigned
-    if (sale.tableId && !sale.isTakeaway) {
-      const otherActive = await prisma.sale.count({
-        where: {
-          tableId: sale.tableId,
-          id: { not: id },
-          status: { notIn: ["completed", "cancelled"] },
-        },
-      });
-      if (otherActive === 0) {
-        await prisma.restaurantTable.update({
-          where: { id: sale.tableId },
-          data: { status: "available" },
-        }).catch(() => {});
-      }
-    }
-
     const transformed = transformSale(updated);
     emitSaleEvent(req, "sale_status_changed", transformed);
 
@@ -716,16 +601,6 @@ router.post("/:id/cancel", async (req, res) => {
   }
 });
 
-// Helper: get unlimited product IDs for filtering
-async function getUnlimitedProductIds(productIds) {
-  if (!productIds.length) return new Set();
-  const unlimited = await prisma.product.findMany({
-    where: { id: { in: productIds }, isUnlimited: true },
-    select: { id: true },
-  });
-  return new Set(unlimited.map((p) => p.id));
-}
-
 // Helper: deduct inventory items
 async function deductInventory(branchId, saleItems) {
   const inventories = await prisma.inventory.findMany({
@@ -735,12 +610,9 @@ async function deductInventory(branchId, saleItems) {
   if (!inventories.length) return;
 
   const inventoryIds = inventories.map((inv) => inv.id);
-  const unlimitedIds = await getUnlimitedProductIds(saleItems.map((i) => i.productId));
 
   const operations = [];
   for (const item of saleItems) {
-    if (unlimitedIds.has(item.productId)) continue;
-
     const inventoryItem = await prisma.inventoryItem.findFirst({
       where: {
         inventoryId: { in: inventoryIds },
@@ -775,13 +647,11 @@ async function restoreInventory(branchId, saleItems) {
   if (!inventories.length) return;
 
   const inventoryIds = inventories.map((inv) => inv.id);
-  const unlimitedIds = await getUnlimitedProductIds(saleItems.map((i) => i.productId));
 
   const operations = [];
   for (const item of saleItems) {
     const qty = Number(item.quantity || 0);
     if (qty <= 0) continue;
-    if (unlimitedIds.has(item.productId)) continue;
 
     const inventoryItem = await prisma.inventoryItem.findFirst({
       where: {

@@ -5,7 +5,6 @@ const http = require("http");
 const socketIO = require("socket.io");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
-const { startBot } = require("./src/modules/telegram/bot");
 const { isDatabaseConnectionError } = require("./utils/databaseError");
 const { startBackupScheduler } = require("./utils/dbBackupScheduler");
 
@@ -53,22 +52,6 @@ app.use(
 const { connect: connectPg } = require("./config/pgdb");
 const prisma = require("./config/prisma");
 connectPg();
-
-function startTelegramBotIfAvailable() {
-  if (
-    !process.env.TELEGRAM_BOT_TOKEN ||
-    !process.env.TELEGRAM_INVENTORY_CHAT_ID
-  ) {
-    console.log("Telegram bot skipped: missing Telegram environment variables");
-    return;
-  }
-
-  try {
-    startBot();
-  } catch (error) {
-    console.warn(`Telegram bot skipped: ${error.message}`);
-  }
-}
 
 // Security headers middleware
 app.use((req, res, next) => {
@@ -118,9 +101,7 @@ app.use("/api/photo", require("./routes/photoRoutes"));
 app.use("/api/branches", require("./routes/branchRoutes"));
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
-app.use("/api/ingredients", require("./routes/ingredientRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
-app.use("/api/tables", require("./routes/tableRoutes"));
 
 // Swagger documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -210,7 +191,6 @@ server.listen(PORT, () => {
       .replace("T", " ")}`,
   );
 
-  startTelegramBotIfAvailable();
   startBackupScheduler();
 });
 

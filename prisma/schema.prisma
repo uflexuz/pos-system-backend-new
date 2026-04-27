@@ -1,4 +1,4 @@
-// Prisma Schema — Hadya Backend
+// Prisma Schema - UFLEX POS Backend
 // PostgreSQL structured tables
 
 generator client {
@@ -46,7 +46,6 @@ model Branch {
   inventories Inventory[]
   sales       Sale[]
   workers     Worker[]
-  tables      RestaurantTable[]
 }
 
 model Category {
@@ -68,42 +67,20 @@ model Category {
 model Product {
   @@map("products")
 
-  id            String   @id
-  name          String?
-  type          String?
-  categoryKey   String?  @map("category")
-  image         String?
-  sku           String?  @unique
-  unit          String?
-  salePrice     Decimal? @map("sale_price") @db.Decimal
-  workerPrice   Decimal? @map("worker_price") @db.Decimal
-  costPrice     Decimal? @map("cost_price") @db.Decimal
-  isUnlimited   Boolean  @default(false) @map("is_unlimited")
-  notes         String?
-  tags          Json     @default("[]")
-  ingredients   Json     @default("[]")
-  collaboration Json     @default("[]")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  id                  String   @id
+  name                String?
+  categoryKey         String?  @map("category")
+  image               String?
+  telegramMessageId   String?  @map("telegram_message_id")
+  sku                 String?  @unique
+  unit                String?
+  salePrice           Decimal? @map("sale_price") @db.Decimal
+  costPrice           Decimal? @map("cost_price") @db.Decimal
 
   // Relations
-  category       Category?       @relation(fields: [categoryKey], references: [key])
-  inventoryItems InventoryItem[]
-  saleItems      SaleItem[]
-}
-
-model Ingredient {
-  @@map("ingredients")
-
-  id            String   @id
-  name          String?
-  unit          String?
-  purchasePrice Decimal? @map("purchase_price") @db.Decimal
-  currentStock  Decimal? @default(0) @map("current_stock") @db.Decimal
-  sku           String?
-  notes         String?
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  category            Category?       @relation(fields: [categoryKey], references: [key])
+  inventoryItems      InventoryItem[]
+  saleItems           SaleItem[]
 }
 
 model Inventory {
@@ -154,51 +131,42 @@ model Worker {
   salesAsWaiter Sale[] @relation("SaleWaiter")
 }
 
-model RestaurantTable {
-  @@map("tables")
+model Customer {
+  @@map("customers")
 
   id          String   @id
-  tableNumber String?  @map("table_number")
-  capacity    Int      @default(4)
-  status      String   @default("available")
-  location    String?
-  branchId    String?  @map("branch")
+  name        String?  @map("full_name")
+  phoneNumber String?  @map("phone")
+  dateOfBirth String?  @map("birth_date")
+  address     String?
+  notes       String?  @map("note")
+  balance     Decimal  @default(0) @db.Decimal
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   // Relations
-  branch Branch? @relation(fields: [branchId], references: [id])
-  sales  Sale[]
+  sales              Sale[]
+  ledgerTransactions CustomerLedgerTransaction[]
 }
 
-model Customer {
-  @@map("customers")
+model CustomerLedgerTransaction {
+  @@map("customer_ledger_transactions")
+  @@index([customerId])
+  @@index([transactionDate])
 
-  id                      String   @id
-  fullName                String?  @map("full_name")
-  phone                   String?
-  birthDate               String?  @map("birth_date")
-  fatherBirthDate         String?  @map("father_birth_date")
-  motherBirthDate         String?  @map("mother_birth_date")
-  sonBirthDate            String?  @map("son_birth_date")
-  daughterBirthDate       String?  @map("daughter_birth_date")
-  spouseBirthDate         String?  @map("spouse_birth_date")
-  olderBrotherBirthDate   String?  @map("older_brother_birth_date")
-  youngerBrotherBirthDate String?  @map("younger_brother_birth_date")
-  olderSisterBirthDate    String?  @map("older_sister_birth_date")
-  youngerSisterBirthDate  String?  @map("younger_sister_birth_date")
-  favoriteHadyaItem       String?  @map("favorite_hadya_item")
-  followsHadyaSocial      String?  @map("follows_hadya_social")
-  shortcomings            String?
-  address                 String?
-  note                    String?
-  isActive                Boolean  @default(true) @map("is_active")
-  customAttributes        Json     @default("[]") @map("custom_attributes")
-  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  id              String   @id
+  customerId      String   @map("customer_id")
+  type            String
+  amount          Decimal  @db.Decimal
+  notes           String?
+  balanceBefore   Decimal  @default(0) @map("balance_before") @db.Decimal
+  balanceAfter    Decimal  @default(0) @map("balance_after") @db.Decimal
+  transactionDate DateTime @default(now()) @map("transaction_date") @db.Timestamptz
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   // Relations
-  sales Sale[]
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 model Sale {
@@ -210,8 +178,6 @@ model Sale {
   branchId       String?   @map("branch")
   sellerId       String?   @map("seller")
   waiterId       String?   @map("waiter")
-  tableId        String?   @map("table_number")
-  isTakeaway     Boolean   @default(false) @map("is_takeaway")
   subtotal       Decimal?  @db.Decimal
   total          Decimal?  @db.Decimal
   discount       Decimal?  @default(0) @db.Decimal
@@ -221,7 +187,7 @@ model Sale {
   taxPercent     Decimal?  @default(0) @map("tax_percent") @db.Decimal
   paymentType    String?   @map("payment_type")
   paymentDetails Json?     @map("payment_details")
-  status         String    @default("pending")
+  status         String    @default("completed")
   transactionId  String?   @map("transaction")
   notes          String?
   customerId     String?   @map("customer")
@@ -232,7 +198,6 @@ model Sale {
   branch      Branch?          @relation(fields: [branchId], references: [id])
   seller      Worker?          @relation("SaleSeller", fields: [sellerId], references: [id])
   waiterRef   Worker?          @relation("SaleWaiter", fields: [waiterId], references: [id])
-  table       RestaurantTable? @relation(fields: [tableId], references: [id])
   customer    Customer?        @relation(fields: [customerId], references: [id])
   transaction Transaction?     @relation(fields: [transactionId], references: [id])
   items       SaleItem[]
@@ -267,12 +232,8 @@ model Transaction {
   status      String   @default("completed")
   createdById String?  @map("created_by")
   worker      Json?
-  ingredient  Json?
-  ingredients Json?
   inventory   Json?
   inventories Json?
-  creditPaid  Decimal? @map("credit_paid") @db.Decimal
-  creditTotal Decimal? @map("credit_total") @db.Decimal
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
 

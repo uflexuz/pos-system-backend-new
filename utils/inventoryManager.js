@@ -447,7 +447,7 @@ class InventoryManager {
         items: {
           include: {
             product: {
-              select: { name: true, sku: true, unit: true, costPrice: true, salePrice: true, workerPrice: true },
+              select: { name: true, sku: true, unit: true, costPrice: true, salePrice: true },
             },
           },
         },
@@ -462,14 +462,12 @@ class InventoryManager {
         totalQuantity: 0,
         totalCost: 0,
         totalSaleValue: 0,
-        totalWorkerPayment: 0,
       };
     }
 
     let totalQuantity = 0;
     let totalCost = 0;
     let totalSaleValue = 0;
-    let totalWorkerPayment = 0;
 
     inventory.items.forEach((item) => {
       if (item.product) {
@@ -477,7 +475,6 @@ class InventoryManager {
         totalQuantity += qty;
         totalCost += qty * (Number(item.product.costPrice) || 0);
         totalSaleValue += qty * (Number(item.product.salePrice) || 0);
-        totalWorkerPayment += qty * (Number(item.product.workerPrice) || 0);
       }
     });
 
@@ -487,7 +484,6 @@ class InventoryManager {
       totalQuantity,
       totalCost,
       totalSaleValue,
-      totalWorkerPayment,
       potentialProfit: totalSaleValue - totalCost,
     };
   }

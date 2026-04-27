@@ -6,6 +6,17 @@ const authMiddleware = require("../middleware/authMiddleware");
 const router = express.Router();
 router.use(authMiddleware);
 
+const TRANSACTION_PAYMENT_TYPES = new Set(["cash", "card", "mixed", "none"]);
+
+function validatePaymentType(paymentType) {
+  if (!paymentType) return null;
+  if (paymentType === "credit") return "Nasiya to'lov tizimdan olib tashlangan!";
+  if (!TRANSACTION_PAYMENT_TYPES.has(paymentType)) {
+    return `Noto'g'ri to'lov turi: ${paymentType}`;
+  }
+  return null;
+}
+
 function mapId(obj) {
   if (!obj) return obj;
   const { id, ...rest } = obj;
@@ -21,8 +32,6 @@ function transformTransaction(t) {
   if (!t) return t;
   const mapped = mapId(t);
   mapped.amount = toNumber(mapped.amount);
-  mapped.creditPaid = toNumber(mapped.creditPaid);
-  mapped.creditTotal = toNumber(mapped.creditTotal);
   return mapped;
 }
 
@@ -33,7 +42,12 @@ router.get("/", async (req, res) => {
     const limit = Math.max(1, parseInt(req.query.limit) || 20);
     const skip = (page - 1) * limit;
 
-    const where = {};
+    const where = {
+      NOT: [{ type: "credit" }, { paymentType: "credit" }],
+    };
+    if (req.query.type === "credit" || req.query.paymentType === "credit") {
+      return res.status(400).json({ message: "Nasiya to'lov tizimdan olib tashlangan!" });
+    }
     if (req.query.type) where.type = req.query.type;
     if (req.query.paymentType) where.paymentType = req.query.paymentType;
     if (req.query.search) {
@@ -64,6 +78,11 @@ router.get("/", async (req, res) => {
 router.post("/cash-in", async (req, res) => {
   try {
     const { amount, paymentType, description } = req.body;
+    const paymentError = validatePaymentType(paymentType);
+    if (paymentError) {
+      return res.status(400).json({ message: paymentError });
+    }
+
     const transaction = await prisma.transaction.create({
       data: {
         id: crypto.randomBytes(12).toString("hex"),
@@ -85,6 +104,11 @@ router.post("/cash-in", async (req, res) => {
 router.post("/cash-out", async (req, res) => {
   try {
     const { amount, paymentType, description } = req.body;
+    const paymentError = validatePaymentType(paymentType);
+    if (paymentError) {
+      return res.status(400).json({ message: paymentError });
+    }
+
     const transaction = await prisma.transaction.create({
       data: {
         id: crypto.randomBytes(12).toString("hex"),
@@ -98,44 +122,6 @@ router.post("/cash-out", async (req, res) => {
     res.status(201).json(transformTransaction(transaction));
   } catch (error) {
     console.error("Cash-out error:", error.message);
-    res.status(500).json({ message: "Server xatoligi!" });
-  }
-});
-
-// POST /credit/payment/:id — Credit payment on existing transaction
-router.post("/credit/payment/:id", async (req, res) => {
-  try {
-    const { paymentAmount, description } = req.body;
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!transaction) {
-      return res.status(404).json({ message: "Tranzaksiya topilmadi!" });
-    }
-
-    const currentPaid = Number(transaction.creditPaid || 0);
-    const payAmount = Number(paymentAmount || 0);
-    if (payAmount <= 0) {
-      return res.status(400).json({ message: "To'lov summasi musbat bo'lishi kerak" });
-    }
-    const creditTotal = Number(transaction.creditTotal || 0);
-    const newPaid = Math.min(currentPaid + payAmount, creditTotal);
-    const newStatus = newPaid >= creditTotal ? "completed" : transaction.status;
-
-    const updated = await prisma.transaction.update({
-      where: { id: req.params.id },
-      data: {
-        creditPaid: newPaid,
-        status: newStatus,
-        description: description || transaction.description,
-        updatedAt: new Date(),
-      },
-    });
-
-    res.json(transformTransaction(updated));
-  } catch (error) {
-    console.error("Credit payment error:", error.message);
     res.status(500).json({ message: "Server xatoligi!" });
   }
 });

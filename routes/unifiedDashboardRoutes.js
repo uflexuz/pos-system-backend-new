@@ -8,6 +8,9 @@ router.use(authMiddleware);
 // GET /unified-dashboard — Comprehensive sales statistics
 router.get("/unified-dashboard", async (req, res) => {
   try {
+    const nonCreditTransactionWhere = {
+      NOT: [{ type: "credit" }, { paymentType: "credit" }],
+    };
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -31,7 +34,6 @@ router.get("/unified-dashboard", async (req, res) => {
       txAgg,
       txCashAgg,
       txCardAgg,
-      txCreditAgg,
       // Branches with sales
       branches,
       // Top products
@@ -65,6 +67,7 @@ router.get("/unified-dashboard", async (req, res) => {
       }),
       prisma.product.count(),
       prisma.transaction.aggregate({
+        where: nonCreditTransactionWhere,
         _count: { id: true },
         _sum: { amount: true },
       }),
@@ -74,10 +77,6 @@ router.get("/unified-dashboard", async (req, res) => {
       }),
       prisma.transaction.aggregate({
         where: { paymentType: "card" },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.aggregate({
-        where: { type: "credit" },
         _sum: { amount: true },
       }),
       prisma.branch.findMany({ select: { id: true, name: true } }),
@@ -155,7 +154,6 @@ router.get("/unified-dashboard", async (req, res) => {
         totalAmount: Number(txAgg._sum.amount || 0),
         cashAmount: Number(txCashAgg._sum.amount || 0),
         cardAmount: Number(txCardAgg._sum.amount || 0),
-        creditAmount: Number(txCreditAgg._sum.amount || 0),
       },
       branches: branchSales,
       comparison: {

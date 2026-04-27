@@ -22,7 +22,6 @@ function mapProduct(product) {
 
   const mapped = mapId(product);
   if (mapped.salePrice != null) mapped.salePrice = Number(mapped.salePrice);
-  if (mapped.workerPrice != null) mapped.workerPrice = Number(mapped.workerPrice);
   if (mapped.costPrice != null) mapped.costPrice = Number(mapped.costPrice);
 
   const categoryDetails = mapped.category ? mapId(mapped.category) : null;
@@ -58,7 +57,6 @@ function calculateInventorySummary(items) {
       const quantity = Number(item.quantity || 0);
       const costPrice = Number(item.product?.costPrice || 0);
       const salePrice = Number(item.product?.salePrice || 0);
-      const workerPrice = Number(item.product?.workerPrice || 0);
 
       if (item.product?._id) {
         summary.productIds.add(item.product._id);
@@ -67,7 +65,6 @@ function calculateInventorySummary(items) {
       summary.totalQuantity += quantity;
       summary.totalCost += quantity * costPrice;
       summary.totalSaleValue += quantity * salePrice;
-      summary.totalWorkerPayment += quantity * workerPrice;
 
       return summary;
     },
@@ -76,7 +73,6 @@ function calculateInventorySummary(items) {
       totalQuantity: 0,
       totalCost: 0,
       totalSaleValue: 0,
-      totalWorkerPayment: 0,
     },
   );
 }
@@ -133,7 +129,6 @@ function buildTodayProducts(items, dateRange) {
       quantity: Number(item.quantity || 0),
       salePrice: Number(item.product?.salePrice || 0),
       costPrice: Number(item.product?.costPrice || 0),
-      workerPrice: Number(item.product?.workerPrice || 0),
       unit: item.product?.unit || "dona",
       time: item.updatedAt || item.createdAt,
       oldQuantity: null,
@@ -173,7 +168,7 @@ async function buildInventoryDashboard({ branchId, startDate, endDate }) {
     const items = inventories.flatMap((inventory) => inventory.products || []);
     const summary = calculateInventorySummary(items);
     const totalItems = items.length;
-    const costPriceCapital = summary.totalCost + summary.totalWorkerPayment;
+    const costPriceCapital = summary.totalCost;
     const salePriceCapital = summary.totalSaleValue;
     const potentialProfit = salePriceCapital - costPriceCapital;
     const profitMargin = costPriceCapital > 0 ? (potentialProfit / costPriceCapital) * 100 : 0;
@@ -185,7 +180,6 @@ async function buildInventoryDashboard({ branchId, startDate, endDate }) {
       totalQuantity: summary.totalQuantity,
       costPriceCapital,
       salePriceCapital,
-      totalWorkerPayment: summary.totalWorkerPayment,
       potentialProfit,
       profitMargin,
       todayProducts: buildTodayProducts(items, dateRange),
@@ -195,14 +189,12 @@ async function buildInventoryDashboard({ branchId, startDate, endDate }) {
   const report = branchCapital.reduce(
     (summary, branch) => {
       summary.totalCost += branch.costPriceCapital;
-      summary.totalWorkerPayment += branch.totalWorkerPayment;
       summary.totalSaleValue += branch.salePriceCapital;
       summary.totalProducts += branch.totalItems;
       return summary;
     },
     {
       totalCost: 0,
-      totalWorkerPayment: 0,
       totalSaleValue: 0,
       totalProducts: 0,
     },

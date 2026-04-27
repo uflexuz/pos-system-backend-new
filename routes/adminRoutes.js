@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const requireAdminRole = require("../middleware/requireAdminRole");
 
 function mapId(obj) {
   if (!obj) return obj;
@@ -31,6 +32,7 @@ async function attachManagedBranchIds(admins) {
 }
 
 router.use(authMiddleware);
+router.use(requireAdminRole);
 
 // GET / - List all admins (non-deleted)
 router.get("/", async (req, res) => {

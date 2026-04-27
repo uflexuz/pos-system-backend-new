@@ -18,9 +18,11 @@ const express = require("express");
 const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const requireAdminRole = require("../middleware/requireAdminRole");
 
 const router = express.Router();
 router.use(authMiddleware);
+router.use(requireAdminRole);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -36,7 +38,6 @@ const PRODUCT_SELECT = {
   unit: true,
   salePrice: true,
   costPrice: true,
-  workerPrice: true,
 };
 
 /** Reusable include block for InventoryItem → Product + Branch */
@@ -54,7 +55,7 @@ const ITEM_INCLUDE = {
  * Transforms a raw Prisma InventoryItem into the flat admin shape:
  * {
  *   _id, inventoryId, quantity, updatedAt,
- *   product: { _id, name, sku, unit, salePrice, costPrice, workerPrice },
+ *   product: { _id, name, sku, unit, salePrice, costPrice },
  *   branch:  { _id, name }
  * }
  */
@@ -71,7 +72,6 @@ function formatItem(item) {
       unit: item.product.unit,
       salePrice: toNum(item.product.salePrice),
       costPrice: toNum(item.product.costPrice),
-      workerPrice: toNum(item.product.workerPrice),
     },
     branch: {
       _id: item.inventory.branch.id,
@@ -204,8 +204,7 @@ router.get("/dashboard", async (req, res) => {
         COUNT(DISTINCT ii.product_id)::int                                  AS "totalItems",
         COALESCE(SUM(ii.quantity),                                     0)::float AS "totalQuantity",
         COALESCE(SUM(ii.quantity * COALESCE(p.cost_price,   0::numeric)), 0)::float AS "rawCostCapital",
-        COALESCE(SUM(ii.quantity * COALESCE(p.sale_price,   0::numeric)), 0)::float AS "salePriceCapital",
-        COALESCE(SUM(ii.quantity * COALESCE(p.worker_price, 0::numeric)), 0)::float AS "totalWorkerPayment"
+        COALESCE(SUM(ii.quantity * COALESCE(p.sale_price,   0::numeric)), 0)::float AS "salePriceCapital"
       FROM branches b
       LEFT JOIN inventories     inv ON inv.branch       = b.id
       LEFT JOIN inventory_items ii  ON ii.inventory_id  = inv.id
@@ -225,7 +224,7 @@ router.get("/dashboard", async (req, res) => {
         quantity:  true,
         updatedAt: true,
         inventory: { select: { branchId: true } },
-        product:   { select: { name: true, unit: true, salePrice: true, costPrice: true, workerPrice: true } },
+        product:   { select: { name: true, unit: true, salePrice: true, costPrice: true } },
       },
     });
 
@@ -242,7 +241,6 @@ router.get("/dashboard", async (req, res) => {
         quantity:     toNum(it.quantity),
         salePrice:    toNum(it.product?.salePrice),
         costPrice:    toNum(it.product?.costPrice),
-        workerPrice:  toNum(it.product?.workerPrice),
         unit:         it.product?.unit       || "dona",
         time:         it.updatedAt,
         newQuantity:  toNum(it.quantity),
@@ -250,8 +248,7 @@ router.get("/dashboard", async (req, res) => {
       }));
 
       const rawCost    = toNum(b.rawCostCapital);
-      const worker     = toNum(b.totalWorkerPayment);
-      const costTotal  = rawCost + worker;          // tannarx + ishchi haqqi
+      const costTotal  = rawCost;
       const sale       = toNum(b.salePriceCapital);
       const profit     = sale - costTotal;
 
@@ -262,7 +259,6 @@ router.get("/dashboard", async (req, res) => {
         totalQuantity:     toNum(b.totalQuantity),
         costPriceCapital:  costTotal,
         salePriceCapital:  sale,
-        totalWorkerPayment: worker,
         potentialProfit:   profit,
         profitMargin:      costTotal > 0 ? (profit / costTotal) * 100 : 0,
         todayProducts: {
@@ -276,12 +272,11 @@ router.get("/dashboard", async (req, res) => {
     const report = branchCapital.reduce(
       (acc, b) => {
         acc.totalCost           += b.costPriceCapital;
-        acc.totalWorkerPayment  += b.totalWorkerPayment;
         acc.totalSaleValue      += b.salePriceCapital;
         acc.totalProducts       += b.totalItems;
         return acc;
       },
-      { totalCost: 0, totalWorkerPayment: 0, totalSaleValue: 0, totalProducts: 0 },
+      { totalCost: 0, totalSaleValue: 0, totalProducts: 0 },
     );
 
     res.json({ branchCapital, report });
