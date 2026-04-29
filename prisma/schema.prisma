@@ -54,7 +54,6 @@ model Category {
   id        String   @id
   name      String?
   key       String?  @unique
-  emoji     String?  @default("📦")
   isActive  Boolean  @default(true) @map("is_active")
   order     Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz

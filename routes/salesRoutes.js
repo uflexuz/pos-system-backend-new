@@ -2,12 +2,14 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const { isTelegramBackedImage } = require("../utils/telegramService");
 
 const router = express.Router();
 router.use(authMiddleware);
 
 const SALE_STATUSES = new Set(["completed", "cancelled"]);
 const SALE_PAYMENT_TYPES = new Set(["cash", "card", "mixed"]);
+const APP_TIMEZONE_OFFSET_MINUTES = 5 * 60; // Asia/Tashkent
 
 function normalizeSalePayment(paymentType, paymentDetails, total) {
   const normalizedPaymentType = paymentType || "cash";
@@ -57,13 +59,43 @@ function toNumber(val) {
   return Number(val);
 }
 
+function getPublicProductImagePath(product) {
+  if (!product) return "";
+
+  if (product.telegramMessageId) {
+    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
+  }
+
+  if (!product.image) return product.image || "";
+
+  if (String(product.image).startsWith("/api/products/image/")) {
+    return product.image;
+  }
+
+  if (isTelegramBackedImage(product.image)) {
+    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
+  }
+
+  return product.image;
+}
+
+function transformProduct(product) {
+  if (!product) return product;
+  const mapped = mapId(product);
+  if (mapped.salePrice != null) mapped.salePrice = Number(mapped.salePrice);
+  if (mapped.costPrice != null) mapped.costPrice = Number(mapped.costPrice);
+  mapped.image = getPublicProductImagePath(mapped);
+  delete mapped.telegramMessageId;
+  return mapped;
+}
+
 function transformSaleItem(item) {
   if (!item) return item;
   const mapped = mapId(item);
   mapped.quantity = toNumber(mapped.quantity);
   mapped.unitPrice = toNumber(mapped.unitPrice);
   mapped.totalPrice = toNumber(mapped.totalPrice);
-  if (mapped.product) mapped.product = mapId(mapped.product);
+  if (mapped.product) mapped.product = transformProduct(mapped.product);
   return mapped;
 }
 
@@ -78,9 +110,11 @@ function transformSale(sale) {
   if (mapped.items) mapped.items = mapped.items.map(transformSaleItem);
   if (mapped.branch) mapped.branch = mapId(mapped.branch);
   if (mapped.seller) mapped.seller = mapId(mapped.seller);
-  if (mapped.waiterRef) mapped.waiterRef = mapId(mapped.waiterRef);
+  if (!mapped.seller && mapped.waiterRef) mapped.seller = mapId(mapped.waiterRef);
   if (mapped.customer) mapped.customer = mapId(mapped.customer);
-  mapped.waiter = mapped.waiterRef || mapped.waiterId || null;
+  delete mapped.waiterRef;
+  delete mapped.waiterId;
+  delete mapped.waiter;
   return mapped;
 }
 
@@ -115,6 +149,29 @@ function applyStatusFilter(where, rawStatus) {
   return null;
 }
 
+function parseDateOnlyInAppTimezone(rawDate, endOfDay = false) {
+  if (!rawDate) return null;
+
+  const value = String(rawDate);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const localUtcTime = Date.UTC(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
+  );
+
+  return new Date(localUtcTime - APP_TIMEZONE_OFFSET_MINUTES * 60 * 1000);
+}
+
 // GET / — List sales with pagination and filters
 router.get("/", async (req, res) => {
   try {
@@ -124,7 +181,9 @@ router.get("/", async (req, res) => {
 
     const where = {};
     if (req.query.branch) where.branchId = req.query.branch;
-    if (req.query.waiter) where.waiterId = req.query.waiter;
+    if (req.query.seller || req.query.waiter) {
+      where.sellerId = req.query.seller || req.query.waiter;
+    }
     const statusError = applyStatusFilter(where, req.query.status);
     if (statusError) {
       return res.status(400).json({ message: statusError });
@@ -138,12 +197,10 @@ router.get("/", async (req, res) => {
     }
     if (req.query.startDate || req.query.endDate) {
       where.createdAt = {};
-      if (req.query.startDate) where.createdAt.gte = new Date(req.query.startDate);
-      if (req.query.endDate) {
-        const endDate = new Date(req.query.endDate);
-        endDate.setHours(23, 59, 59, 999);
-        where.createdAt.lte = endDate;
-      }
+      const startDate = parseDateOnlyInAppTimezone(req.query.startDate);
+      const endDate = parseDateOnlyInAppTimezone(req.query.endDate, true);
+      if (startDate) where.createdAt.gte = startDate;
+      if (endDate) where.createdAt.lte = endDate;
     }
 
     const [sales, total, statsAgg] = await Promise.all([
@@ -287,6 +344,7 @@ router.post("/", async (req, res) => {
 
     const saleNumber = await generateSaleNumber();
     const saleId = crypto.randomBytes(12).toString("hex");
+    const effectiveSellerId = sellerId || waiterId || req.user?.workerId || null;
 
     const sale = await prisma.sale.create({
       data: {
@@ -294,8 +352,8 @@ router.post("/", async (req, res) => {
         saleNumber,
         saleDate: saleDate ? new Date(saleDate) : new Date(),
         branchId: branchId || null,
-        sellerId: sellerId || null,
-        waiterId: waiterId || null,
+        sellerId: effectiveSellerId,
+        waiterId: null,
         subtotal,
         total,
         discount: discountAmount,
@@ -535,18 +593,18 @@ router.post("/:id/close", async (req, res) => {
     const transformed = transformSale(updated);
     emitSaleEvent(req, "sale_status_changed", transformed);
 
-    // Afitsant balansini yangilash (faqat xizmat haqi qo'shiladi)
-    if (updated.waiterId && finalTaxAmount > 0) {
+    // Sotuvchi balansini yangilash (faqat xizmat haqi qo'shiladi)
+    if (updated.sellerId && finalTaxAmount > 0) {
       try {
         await prisma.worker.update({
-          where: { id: updated.waiterId },
+          where: { id: updated.sellerId },
           data: {
             balance: { increment: finalTaxAmount },
             updatedAt: new Date(),
           },
         });
       } catch (balanceErr) {
-        console.error("Waiter balance update error:", balanceErr.message);
+        console.error("Seller balance update error:", balanceErr.message);
       }
     }
 

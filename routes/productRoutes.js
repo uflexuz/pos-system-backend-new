@@ -2,7 +2,13 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
-const { uploadImageToTelegram, getTelegramMessage, getTelegramImageUrl } = require("../utils/telegramService");
+const {
+  uploadImageToTelegram,
+  getTelegramFilePathFromImage,
+  isTelegramBackedImage,
+  streamTelegramFile,
+  streamTelegramMessageImage,
+} = require("../utils/telegramService");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
@@ -59,6 +65,26 @@ function convertDecimals(product) {
   return p;
 }
 
+function getPublicProductImagePath(product) {
+  if (!product) return "";
+
+  if (product.telegramMessageId) {
+    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
+  }
+
+  if (!product.image) return product.image || "";
+
+  if (String(product.image).startsWith("/api/products/image/")) {
+    return product.image;
+  }
+
+  if (isTelegramBackedImage(product.image)) {
+    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
+  }
+
+  return product.image;
+}
+
 function mapProduct(product) {
   const converted = convertDecimals(product);
   const mapped = mapId(converted);
@@ -67,11 +93,108 @@ function mapProduct(product) {
   mapped.category = mapped.categoryKey || categoryDetails?.key || null;
 
   if (categoryDetails) {
+    delete categoryDetails.emoji;
     mapped.categoryDetails = categoryDetails;
   }
 
+  mapped.image = getPublicProductImagePath(mapped);
+  delete mapped.telegramMessageId;
+
   return mapped;
 }
+
+async function pipeTelegramImage(filePath, res) {
+  const telegramResponse = await streamTelegramFile(filePath);
+  return pipeImageResponse(telegramResponse, res);
+}
+
+async function pipeTelegramMessageImage(messageId, res) {
+  const telegramResponse = await streamTelegramMessageImage(messageId);
+  return pipeImageResponse(telegramResponse, res);
+}
+
+function pipeImageResponse(telegramResponse, res) {
+  const contentType = telegramResponse.headers["content-type"] || "image/jpeg";
+
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+
+  telegramResponse.data.on("error", (error) => {
+    console.error("Product image stream error:", error.message);
+    if (!res.headersSent) {
+      res.status(502).end();
+    } else {
+      res.end();
+    }
+  });
+
+  return telegramResponse.data.pipe(res);
+}
+
+function decodeBase64Url(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+  return Buffer.from(normalized + padding, "base64").toString("utf8");
+}
+
+// GET /image/:sku — Product image stream
+router.get("/image/:sku", async (req, res) => {
+  try {
+    const sku = normalizeSku(req.params.sku);
+    if (!sku) {
+      return res.status(400).json({ message: "SKU kiritilishi shart!" });
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { sku },
+      select: { image: true, telegramMessageId: true },
+    });
+
+    if (!product?.image && !product?.telegramMessageId) {
+      return res.status(404).json({ message: "Rasm topilmadi!" });
+    }
+
+    if (product.telegramMessageId) {
+      return pipeTelegramMessageImage(product.telegramMessageId, res);
+    }
+
+    const filePath = getTelegramFilePathFromImage(product.image);
+    if (filePath) {
+      return pipeTelegramImage(filePath, res);
+    }
+
+    if (String(product.image).startsWith("/uploads/")) {
+      const publicDir = path.resolve(__dirname, "..", "public");
+      const imagePath = path.resolve(publicDir, String(product.image).replace(/^\/+/, ""));
+
+      if (!imagePath.startsWith(publicDir + path.sep)) {
+        return res.status(400).json({ message: "Rasm path noto'g'ri!" });
+      }
+
+      return res.sendFile(imagePath);
+    }
+
+    return res.status(404).json({ message: "Rasm topilmadi!" });
+  } catch (error) {
+    console.error("Product image proxy error:", error.message);
+    return res.status(502).json({ message: "Rasmni yuklashda xatolik!" });
+  }
+});
+
+// GET /assets/:encodedPath — Compatibility image stream for old direct image values
+router.get("/assets/:encodedPath", async (req, res) => {
+  try {
+    const filePath = decodeBase64Url(req.params.encodedPath).replace(/^\/+/, "");
+    if (!filePath || filePath.includes("..") || /[\r\n]/.test(filePath)) {
+      return res.status(400).json({ message: "Rasm path noto'g'ri!" });
+    }
+
+    return pipeTelegramImage(filePath, res);
+  } catch (error) {
+    console.error("Product asset proxy error:", error.message);
+    return res.status(502).json({ message: "Rasmni yuklashda xatolik!" });
+  }
+});
 
 // GET / — list all products with category
 router.get("/", authMiddleware, async (req, res) => {
@@ -111,7 +234,7 @@ router.post("/", authMiddleware, async (req, res) => {
       },
     });
 
-    return res.status(201).json(mapId(convertDecimals(product)));
+    return res.status(201).json(mapProduct(product));
   } catch (error) {
     console.error("Product create error:", error.message);
     return res.status(500).json({ message: "Server xatoligi!" });
@@ -178,35 +301,26 @@ router.post("/upload-image", authMiddleware, upload.single("image"), async (req,
     if (!uploadResult.success) {
       return res.status(500).json({ 
         success: false,
-        message: `Telegram'ga yuklashda xatolik: ${uploadResult.error}` 
+        message: `Rasmni saqlashda xatolik: ${uploadResult.error}` 
       });
     }
 
-    const urlResult = await getTelegramImageUrl(uploadResult.fileId);
-    if (!urlResult.success) {
-      return res.status(500).json({
-        success: false,
-        message: `Telegram rasm URLini olishda xatolik: ${urlResult.error}`,
-      });
-    }
-
-    // Update product with telegram_message_id and the resolved Telegram image URL
-    const imageUrl = urlResult.url;
+    // Keep remote storage details private and expose only the generic product image URL
     const updatedProduct = await prisma.product.update({
       where: { sku },
       data: {
         telegramMessageId: uploadResult.messageId,
-        image: imageUrl,
+        image: null,
       },
       include: { category: true },
     });
+    const mappedProduct = mapProduct(updatedProduct);
 
     return res.status(200).json({
       success: true,
       message: "Rasm muvaffaqiyatli yuklandi!",
-      product: mapProduct(updatedProduct),
-      telegramMessageId: uploadResult.messageId,
-      imageUrl,
+      product: mappedProduct,
+      imageUrl: mappedProduct.image,
     });
   } catch (error) {
     console.error("Image upload error:", error);
@@ -227,38 +341,6 @@ router.post("/upload-image", authMiddleware, upload.single("image"), async (req,
   }
 });
 
-// GET /image/:messageId — Get image URL from Telegram message_id
-router.get("/image/:messageId", authMiddleware, async (req, res) => {
-  try {
-    const { messageId } = req.params;
-
-    if (!messageId) {
-      return res.status(400).json({ message: "Message ID kiritilishi shart!" });
-    }
-
-    // Get message from Telegram
-    const messageResult = await getTelegramMessage(messageId);
-    if (!messageResult.success) {
-      return res.status(404).json({ message: `Rasm topilmadi: ${messageResult.error}` });
-    }
-
-    // Get image URL from file_id
-    const urlResult = await getTelegramImageUrl(messageResult.fileId);
-    if (!urlResult.success) {
-      return res.status(500).json({ message: `Rasm URLsini olishda xatolik: ${urlResult.error}` });
-    }
-
-    return res.status(200).json({
-      success: true,
-      imageUrl: urlResult.url,
-      fileId: messageResult.fileId,
-    });
-  } catch (error) {
-    console.error("Get image error:", error.message);
-    return res.status(500).json({ message: "Server xatoligi!" });
-  }
-});
-
 // PUT /:sku — update product by SKU
 router.put("/:sku", authMiddleware, async (req, res) => {
   try {
@@ -272,7 +354,9 @@ router.put("/:sku", authMiddleware, async (req, res) => {
     if (unit !== undefined) data.unit = unit;
     if (salePrice !== undefined) data.salePrice = salePrice;
     if (costPrice !== undefined) data.costPrice = costPrice;
-    if (image !== undefined) data.image = image;
+    if (image !== undefined && !String(image).startsWith("/api/products/image/")) {
+      data.image = image;
+    }
     if (sku !== undefined) data.sku = sku;
 
     const product = await prisma.product.update({
@@ -280,7 +364,7 @@ router.put("/:sku", authMiddleware, async (req, res) => {
       data,
     });
 
-    return res.json(mapId(convertDecimals(product)));
+    return res.json(mapProduct(product));
   } catch (error) {
     console.error("Product update error:", error.message);
     return res.status(500).json({ message: "Server xatoligi!" });

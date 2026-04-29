@@ -22,7 +22,6 @@ router.get("/unified-dashboard", async (req, res) => {
       // Sales aggregates
       salesAgg,
       salesDiscountAgg,
-      totalItemsSold,
       // Today's sales
       todaySalesAgg,
       // Yesterday's sales
@@ -47,10 +46,6 @@ router.get("/unified-dashboard", async (req, res) => {
       prisma.sale.aggregate({
         where: { status: { not: "cancelled" } },
         _sum: { discount: true },
-      }),
-      prisma.saleItem.aggregate({
-        where: { sale: { status: { not: "cancelled" } } },
-        _sum: { quantity: true },
       }),
       prisma.sale.aggregate({
         where: { createdAt: { gte: today, lt: tomorrow }, status: { not: "cancelled" } },
@@ -90,10 +85,9 @@ router.get("/unified-dashboard", async (req, res) => {
     ]);
 
     // Inventory stats
-    let totalQuantity = 0, totalCostValue = 0, totalSaleValue = 0;
+    let totalCostValue = 0, totalSaleValue = 0;
     for (const item of inventoryItems) {
       const qty = Number(item.quantity || 0);
-      totalQuantity += qty;
       totalCostValue += qty * Number(item.product?.costPrice || 0);
       totalSaleValue += qty * Number(item.product?.salePrice || 0);
     }
@@ -122,12 +116,13 @@ router.get("/unified-dashboard", async (req, res) => {
     const topProductIds = topProductsRaw.map((p) => p.productId);
     const topProductDetails = await prisma.product.findMany({
       where: { id: { in: topProductIds } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, unit: true },
     });
-    const productNameMap = new Map(topProductDetails.map((p) => [p.id, p.name]));
+    const productDetailsMap = new Map(topProductDetails.map((p) => [p.id, p]));
     const topProducts = topProductsRaw.map((p) => ({
       _id: p.productId,
-      productName: productNameMap.get(p.productId) || "Noma'lum",
+      productName: productDetailsMap.get(p.productId)?.name || "Noma'lum",
+      unit: productDetailsMap.get(p.productId)?.unit || "",
       totalSold: Number(p._sum.quantity || 0),
       totalRevenue: Number(p._sum.totalPrice || 0),
     }));
@@ -141,11 +136,9 @@ router.get("/unified-dashboard", async (req, res) => {
         totalRevenue,
         totalDiscount: Number(salesDiscountAgg._sum.discount || 0),
         avgSaleAmount: totalSales > 0 ? Math.round(totalRevenue / totalSales) : 0,
-        totalItemsSold: Number(totalItemsSold._sum.quantity || 0),
       },
       inventory: {
         totalProducts: productsCount,
-        totalQuantity,
         totalCostValue,
         totalSaleValue,
       },

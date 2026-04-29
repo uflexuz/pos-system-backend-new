@@ -46,8 +46,6 @@ async function getDashboardData(dateFilter) {
       Number(item.quantity || 0) * Number(item.product?.costPrice || 0);
   }
 
-  const inventoryCount = await prisma.inventoryItem.count();
-
   return {
     transactionsState: {
       totalCashIn,
@@ -59,10 +57,8 @@ async function getDashboardData(dateFilter) {
     productsCount,
     expensesState: { total: totalCashOut },
     capital: {
-      total: productsCapital,
       products: productsCapital,
     },
-    inventoryCount,
   };
 }
 

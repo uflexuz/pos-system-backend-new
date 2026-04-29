@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const { sendCustomerLedgerSms } = require("../utils/eskizSmsService");
 
 const router = express.Router();
 
@@ -56,6 +57,23 @@ function normalizeCustomerPayload(body) {
         ? Number(body.balance ?? body.balans) || 0
         : undefined,
   };
+}
+
+async function notifyCustomerLedgerSms(customer, transaction) {
+  try {
+    const smsResult = await sendCustomerLedgerSms(customer, transaction);
+    if (smsResult?.skipped) {
+      console.warn("Customer ledger SMS skipped:", smsResult.error);
+    }
+    return smsResult;
+  } catch (error) {
+    const errorMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message;
+    console.error("Customer ledger SMS error:", errorMessage);
+    return { success: false, error: errorMessage };
+  }
 }
 
 function buildDateFilter(startDate, endDate) {
@@ -194,9 +212,15 @@ router.post("/ledger", authMiddleware, async (req, res) => {
       return { transaction, customer: updatedCustomer };
     });
 
+    const smsResult = await notifyCustomerLedgerSms(
+      result.customer,
+      result.transaction
+    );
+
     return res.status(201).json({
       transaction: transformLedgerTransaction(result.transaction),
       customer: transformCustomer(result.customer),
+      sms: smsResult,
     });
   } catch (error) {
     console.error("Customer ledger create error:", error.message);
@@ -260,19 +284,47 @@ router.post("/", authMiddleware, async (req, res) => {
       return res.status(400).json({ message: "Mijoz ismi majburiy!" });
     }
 
-    const customer = await prisma.customer.create({
-      data: {
-        id: crypto.randomBytes(12).toString("hex"),
-        name: payload.name,
-        phoneNumber: payload.phoneNumber,
-        dateOfBirth: payload.dateOfBirth,
-        address: payload.address,
-        notes: payload.notes,
-        balance: payload.balance || 0,
-      },
+    const initialBalance = Number(payload.balance || 0);
+    const result = await prisma.$transaction(async (tx) => {
+      const createdCustomer = await tx.customer.create({
+        data: {
+          id: crypto.randomBytes(12).toString("hex"),
+          name: payload.name,
+          phoneNumber: payload.phoneNumber,
+          dateOfBirth: payload.dateOfBirth,
+          address: payload.address,
+          notes: payload.notes,
+          balance: initialBalance,
+        },
+      });
+
+      let initialLedgerTransaction = null;
+      if (initialBalance !== 0) {
+        initialLedgerTransaction = await tx.customerLedgerTransaction.create({
+          data: {
+            id: crypto.randomBytes(12).toString("hex"),
+            customerId: createdCustomer.id,
+            type: initialBalance > 0 ? "given" : "received",
+            amount: Math.abs(initialBalance),
+            notes: "Boshlang'ich balans",
+            balanceBefore: 0,
+            balanceAfter: initialBalance,
+            transactionDate: new Date(),
+          },
+        });
+      }
+
+      return { customer: createdCustomer, initialLedgerTransaction };
     });
 
-    return res.status(201).json(transformCustomer(customer));
+    if (result.initialLedgerTransaction) {
+      await notifyCustomerLedgerSms(
+        result.customer,
+        result.initialLedgerTransaction
+      );
+    }
+
+    return res.status(201).json(transformCustomer(result.customer));
   } catch (error) {
     console.error("Customer create error:", error.message);
     return res.status(500).json({ message: "Server xatoligi!" });
@@ -282,6 +334,13 @@ router.post("/", authMiddleware, async (req, res) => {
 // PUT /:id — update customer
 router.put("/:id", authMiddleware, async (req, res) => {
   try {
+    if (req.body.balance !== undefined || req.body.balans !== undefined) {
+      return res.status(400).json({
+        message:
+          "Balansni mijozni tahrirlashda o'zgartirib bo'lmaydi. Oldi-berdi bo'limidan foydalaning.",
+      });
+    }
+
     const payload = normalizeCustomerPayload(req.body);
     const data = {};
 
@@ -290,7 +349,6 @@ router.put("/:id", authMiddleware, async (req, res) => {
     if (req.body.dateOfBirth !== undefined || req.body.birthDate !== undefined) data.dateOfBirth = payload.dateOfBirth;
     if (req.body.address !== undefined) data.address = payload.address;
     if (req.body.notes !== undefined || req.body.note !== undefined) data.notes = payload.notes;
-    if (payload.balance !== undefined) data.balance = payload.balance;
     data.updatedAt = new Date();
 
     if (data.name !== undefined && !data.name) {
