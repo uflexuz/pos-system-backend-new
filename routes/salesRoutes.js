@@ -184,6 +184,10 @@ router.get("/", async (req, res) => {
     if (req.query.seller || req.query.waiter) {
       where.sellerId = req.query.seller || req.query.waiter;
     }
+    // Sotuvchi (worker) faqat o'ziga tegishli sotuvlarni ko'rishi mumkin
+    if (req.user?.workerId) {
+      where.sellerId = req.user.workerId;
+    }
     const statusError = applyStatusFilter(where, req.query.status);
     if (statusError) {
       return res.status(400).json({ message: statusError });
@@ -283,6 +287,10 @@ router.get("/:id", async (req, res) => {
 
     if (!sale) {
       return res.status(404).json({ message: "Sotuv topilmadi!" });
+    }
+
+    if (req.user?.workerId && sale.sellerId !== req.user.workerId) {
+      return res.status(403).json({ message: "Bu sotuvni ko'rishga ruxsat yo'q!" });
     }
 
     return res.json(transformSale(sale));
