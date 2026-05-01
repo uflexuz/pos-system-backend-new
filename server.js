@@ -3,8 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const socketIO = require("socket.io");
-const swaggerUi = require("swagger-ui-express");
-const swaggerSpec = require("./config/swagger");
 const { isDatabaseConnectionError } = require("./utils/databaseError");
 const { startBackupScheduler } = require("./utils/dbBackupScheduler");
 
@@ -102,9 +100,6 @@ app.use("/api/branches", require("./routes/branchRoutes"));
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
-
-// Swagger documentation
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Global error handler
 app.use((err, req, res, next) => {
