@@ -223,7 +223,7 @@ router.get("/", async (req, res) => {
       }),
       prisma.sale.count({ where }),
       prisma.sale.aggregate({
-        where: { ...where, status: { not: "cancelled" } },
+        where: { ...where, status: "completed" },
         _count: { id: true },
         _sum: { total: true },
       }),
