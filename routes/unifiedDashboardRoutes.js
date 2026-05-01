@@ -77,7 +77,7 @@ router.get("/unified-dashboard", async (req, res) => {
       prisma.branch.findMany({ select: { id: true, name: true } }),
       prisma.saleItem.groupBy({
         by: ["productId"],
-        where: { sale: { status: { not: "cancelled" } } },
+        where: { sale: { is: { status: { not: "cancelled" } } } },
         _sum: { quantity: true, totalPrice: true },
         orderBy: { _sum: { quantity: "desc" } },
         take: 10,
