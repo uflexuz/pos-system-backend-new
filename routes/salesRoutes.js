@@ -502,7 +502,14 @@ router.patch("/:id/status", async (req, res) => {
     }
 
     if (sale.status === "cancelled" && status === "completed") {
-      return res.status(400).json({ message: "Bekor qilingan sotuvni qayta tugallash mumkin emas!" });
+      if (!req.user?.adminId) {
+        return res.status(403).json({ message: "Bekor qilingan sotuvni faqat admin tiklashi mumkin!" });
+      }
+      if (sale.branchId) {
+        await deductInventory(sale.branchId, sale.items).catch((err) =>
+          console.error("Inventory deduct (status restore) error:", err.message)
+        );
+      }
     }
 
     if (sale.status !== "cancelled" && status === "cancelled" && sale.branchId) {
