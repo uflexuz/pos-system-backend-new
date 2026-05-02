@@ -12,7 +12,6 @@ const CUSTOMER_SORT_FIELDS = new Set([
   "updatedAt",
   "name",
   "phoneNumber",
-  "dateOfBirth",
   "address",
   "balance",
 ]);
@@ -49,7 +48,6 @@ function normalizeCustomerPayload(body) {
   return {
     name: String(body.name ?? body.fullName ?? "").trim(),
     phoneNumber: String(body.phoneNumber ?? body.phone ?? "").replace(/\D/g, ""),
-    dateOfBirth: String(body.dateOfBirth ?? body.birthDate ?? "").trim(),
     address: String(body.address ?? "").trim(),
     notes: String(body.notes ?? body.note ?? "").trim(),
     balance:
@@ -291,7 +289,6 @@ router.post("/", authMiddleware, async (req, res) => {
           id: crypto.randomBytes(12).toString("hex"),
           name: payload.name,
           phoneNumber: payload.phoneNumber,
-          dateOfBirth: payload.dateOfBirth,
           address: payload.address,
           notes: payload.notes,
           balance: initialBalance,
@@ -346,7 +343,6 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
     if (req.body.name !== undefined || req.body.fullName !== undefined) data.name = payload.name;
     if (req.body.phoneNumber !== undefined || req.body.phone !== undefined) data.phoneNumber = payload.phoneNumber;
-    if (req.body.dateOfBirth !== undefined || req.body.birthDate !== undefined) data.dateOfBirth = payload.dateOfBirth;
     if (req.body.address !== undefined) data.address = payload.address;
     if (req.body.notes !== undefined || req.body.note !== undefined) data.notes = payload.notes;
     data.updatedAt = new Date();

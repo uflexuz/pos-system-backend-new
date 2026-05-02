@@ -136,7 +136,6 @@ model Customer {
   id          String   @id
   name        String?  @map("full_name")
   phoneNumber String?  @map("phone")
-  dateOfBirth String?  @map("birth_date")
   address     String?
   notes       String?  @map("note")
   balance     Decimal  @default(0) @db.Decimal
