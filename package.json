@@ -12,7 +12,8 @@
     "seed:tea-products": "node seeds/seedTeaProducts.js",
     "seed:cost-prices": "node seeds/updateProductCostPrices.js",
     "fix:product-units": "node seeds/fixProductUnits.js",
-    "seed:customers:csv": "node seeds/seedCustomersFromCsv.js ../mijoz.csv"
+    "seed:customers:csv": "node seeds/seedCustomersFromCsv.js ../mijoz.csv",
+    "seed:sms:csv": "node seeds/seedSmsFromCsv.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.6.0",
