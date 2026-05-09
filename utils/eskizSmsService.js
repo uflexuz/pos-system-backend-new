@@ -13,7 +13,13 @@ function getEskizConfig() {
     email: process.env.ESKIZ_EMAIL,
     password: process.env.ESKIZ_PASSWORD,
     from: process.env.ESKIZ_FROM || "4546",
+    callbackUrl: process.env.ESKIZ_CALLBACK_URL || null,
   };
+}
+
+function isEskizConfigured() {
+  const config = getEskizConfig();
+  return Boolean(config.email && config.password);
 }
 
 function normalizePhoneNumber(phoneNumber = "") {
@@ -71,6 +77,11 @@ async function getEskizToken(forceRefresh = false) {
   return cachedToken;
 }
 
+function invalidateEskizToken() {
+  cachedToken = null;
+  cachedTokenExpiresAt = 0;
+}
+
 async function sendEskizSms({ phoneNumber, message }, forceTokenRefresh = false) {
   const config = getEskizConfig();
   const mobilePhone = normalizePhoneNumber(phoneNumber);
@@ -88,24 +99,42 @@ async function sendEskizSms({ phoneNumber, message }, forceTokenRefresh = false)
   formData.append("mobile_phone", mobilePhone);
   formData.append("message", message);
   formData.append("from", config.from);
+  if (config.callbackUrl) {
+    formData.append("callback_url", config.callbackUrl);
+  }
 
   try {
-    const response = await axios.post(`${config.baseUrl}/message/sms/send`, formData, {
-      headers: {
-        ...formData.getHeaders(),
-        Authorization: `Bearer ${token}`,
-      },
-      timeout: 15000,
-    });
+    const response = await axios.post(
+      `${config.baseUrl}/message/sms/send`,
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: `Bearer ${token}`,
+        },
+        timeout: 15000,
+      }
+    );
+
+    const data = response.data || {};
+    const eskizMessageId =
+      data.id ||
+      data?.data?.id ||
+      data?.data?.message_id ||
+      data?.message_id ||
+      null;
+    const status = data.status || data?.data?.status || "waiting";
 
     return {
       success: true,
-      data: response.data,
+      data,
+      eskizMessageId: eskizMessageId ? String(eskizMessageId) : null,
+      status: String(status),
+      mobilePhone,
     };
   } catch (error) {
     if (error.response?.status === 401 && !forceTokenRefresh) {
-      cachedToken = null;
-      cachedTokenExpiresAt = 0;
+      invalidateEskizToken();
       return sendEskizSms({ phoneNumber, message }, true);
     }
 
@@ -127,8 +156,49 @@ async function sendCustomerLedgerSms(customer, transaction) {
   });
 }
 
+async function getEskizMessageStatus(eskizMessageId, forceTokenRefresh = false) {
+  if (!eskizMessageId) {
+    throw new Error("Eskiz message ID majburiy");
+  }
+  const config = getEskizConfig();
+  const token = await getEskizToken(forceTokenRefresh);
+  try {
+    const response = await axios.get(
+      `${config.baseUrl}/message/sms/status_by_id/${eskizMessageId}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 15000,
+      }
+    );
+    const data = response.data || {};
+    const body = data.data || {};
+    const status = body.status || data.status || "waiting";
+    const partsCount = body.parts_count ?? data.parts_count ?? null;
+    const totalPrice = body.total_price ?? data.total_price ?? null;
+    const deliveryAtRaw =
+      body.delivery_sm_at || body.submit_sm_resp_at || body.sent_at || null;
+    return {
+      success: true,
+      status: String(status),
+      partsCount: partsCount != null ? Number(partsCount) : null,
+      totalPrice: totalPrice != null ? Number(totalPrice) : null,
+      deliveryAt: deliveryAtRaw ? new Date(deliveryAtRaw) : null,
+      raw: data,
+    };
+  } catch (error) {
+    if (error.response?.status === 401 && !forceTokenRefresh) {
+      invalidateEskizToken();
+      return getEskizMessageStatus(eskizMessageId, true);
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   buildCustomerLedgerSms,
   sendCustomerLedgerSms,
   sendEskizSms,
+  getEskizMessageStatus,
+  isEskizConfigured,
+  normalizePhoneNumber,
 };

@@ -145,6 +145,59 @@ model Customer {
   // Relations
   sales              Sale[]
   ledgerTransactions CustomerLedgerTransaction[]
+  smsMessages        SmsMessage[]
+}
+
+model SmsTemplate {
+  @@map("sms_templates")
+  @@index([isActive])
+
+  id          String   @id
+  name        String   @unique
+  body        String
+  variables   Json     @default("[]")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  messages SmsMessage[]
+}
+
+model SmsMessage {
+  @@map("sms_messages")
+  @@index([status])
+  @@index([category])
+  @@index([recipientPhone])
+  @@index([recipientCustomerId])
+  @@index([senderAdminId])
+  @@index([templateId])
+  @@index([createdAt])
+
+  id                  String    @id
+  templateId          String?   @map("template_id")
+  recipientCustomerId String?   @map("recipient_customer_id")
+  recipientPhone      String    @map("recipient_phone")
+  body                String
+  variables           Json      @default("{}")
+  eskizMessageId      String?   @unique @map("eskiz_message_id")
+  eskizStatusRaw      String?   @map("eskiz_status_raw")
+  status              String    @default("pending")
+  category            String    @default("manual")
+  partsCount          Int?      @map("parts_count")
+  cost                Decimal?  @db.Decimal
+  errorMessage        String?   @map("error_message")
+  senderAdminId       String?   @map("sender_admin_id")
+  sentAt              DateTime? @map("sent_at") @db.Timestamptz
+  statusCheckedAt     DateTime? @map("status_checked_at") @db.Timestamptz
+  deliveredAt         DateTime? @map("delivered_at") @db.Timestamptz
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  // Relations
+  template          SmsTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipientCustomer Customer?    @relation(fields: [recipientCustomerId], references: [id], onDelete: SetNull)
 }
 
 model CustomerLedgerTransaction {
