@@ -100,6 +100,7 @@ app.use("/api/branches", require("./routes/branchRoutes"));
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
+app.use("/api/sms", require("./routes/smsRoutes"));
 
 // Global error handler
 app.use((err, req, res, next) => {
