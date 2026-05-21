@@ -177,7 +177,15 @@ router.get("/eskiz-templates", authMiddleware, requireAdminRole, async (req, res
     }
 
     const { getEskizTemplates } = require("../utils/eskizSmsService");
-    const eskizTemplates = await getEskizTemplates();
+    let eskizTemplates = [];
+    try {
+      eskizTemplates = await getEskizTemplates();
+    } catch (err) {
+      // Log the error but return empty list instead of failing
+      console.warn("[Eskiz] Could not fetch templates, returning empty list:", err.message);
+      // Return empty list - frontend will handle this gracefully
+      return res.json({ items: [], warning: "Eskiz'dan shablonlar olinmadi. Iltimos, shablon ID'sini qo'lda kiriting." });
+    }
 
     // Get already imported templates to mark them
     const importedTemplates = await prisma.smsTemplate.findMany({
@@ -198,10 +206,9 @@ router.get("/eskiz-templates", authMiddleware, requireAdminRole, async (req, res
 
     return res.json({ items });
   } catch (error) {
-    console.error("Eskiz templates fetch error:", error.message);
-    return res
-      .status(502)
-      .json({ message: "Eskiz'dan shablonlarni olishda xatolik" });
+    console.error("Eskiz templates endpoint error:", error.message);
+    // Return empty array instead of error to keep UI functional
+    return res.json({ items: [], warning: "Eskiz'dan shablonlar olinmadi" });
   }
 });
 

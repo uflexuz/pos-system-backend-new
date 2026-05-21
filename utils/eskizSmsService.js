@@ -202,27 +202,51 @@ async function getEskizTemplates(forceTokenRefresh = false) {
 
   const token = await getEskizToken(forceTokenRefresh);
   try {
-    const response = await axios.get(
+    // Try different endpoints as Eskiz API may vary
+    const endpoints = [
       `${config.baseUrl}/template`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 15000,
+      `${config.baseUrl}/user/template`,
+      `${config.baseUrl}/api/template`,
+    ];
+
+    let lastError = null;
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`[Eskiz] Trying endpoint: ${endpoint}`);
+        const response = await axios.get(endpoint, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 15000,
+        });
+        const data = response.data || {};
+        // Eskiz returns { data: [...] } or just [...]
+        const templates = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+        console.log(`[Eskiz] Successfully fetched ${templates.length} templates from ${endpoint}`);
+        return templates.map(t => ({
+          id: String(t.id || ""),
+          body: t.body || "",
+          status: t.status || "",
+          ...t,
+        }));
+      } catch (err) {
+        lastError = err;
+        // Continue to next endpoint if 404
+        if (err.response?.status !== 404) {
+          throw err;
+        }
       }
-    );
-    const data = response.data || {};
-    // Eskiz returns { data: [...] } or just [...]
-    const templates = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
-    return templates.map(t => ({
-      id: String(t.id || ""),
-      body: t.body || "",
-      status: t.status || "",
-      ...t,
-    }));
+    }
+
+    // All endpoints failed with 404 or other error
+    throw lastError || new Error("Eskiz template endpoints not available");
   } catch (error) {
     if (error.response?.status === 401 && !forceTokenRefresh) {
       invalidateEskizToken();
       return getEskizTemplates(true);
     }
+    console.error(`[Eskiz] Templates fetch error: ${error.message}`, {
+      status: error.response?.status,
+      data: error.response?.data,
+    });
     throw error;
   }
 }
