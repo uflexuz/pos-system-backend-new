@@ -502,7 +502,11 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
       recipient_phone: recipientPhoneRaw,
       variables: providedVariables,
       body: customBody,
+      body_override: bodyOverride,
     } = req.body || {};
+
+    // MunavvarA compatibility: use body_override if provided
+    const effectiveCustomBody = bodyOverride || customBody;
 
     let template = null;
     if (templateId) {
@@ -547,25 +551,26 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
           )
         : {};
 
-    const baseBody = template
-      ? template.body
-      : customBody
-        ? String(customBody)
-        : "";
-    if (!baseBody.trim()) {
+    // If body_override is provided, use it as the final body (MunavvarA style)
+    // Otherwise use template body rendered with variables
+    let finalBody;
+    if (effectiveCustomBody && String(effectiveCustomBody).trim()) {
+      // Admin manually edited the body
+      finalBody = String(effectiveCustomBody).trim();
+    } else if (template) {
+      // Use template with variable substitution
+      finalBody = renderTemplateBody(template.body, variables);
+    } else {
       return res
         .status(400)
-        .json({ message: "SMS matni bo'sh bo'lishi mumkin emas" });
+        .json({ message: "SMS matni bo'sh bo'lishi mumkin emas. Shablon tanlang yoki matn kiriting." });
     }
-    const renderedBody = template
-      ? renderTemplateBody(baseBody, variables)
-      : baseBody;
 
     let sendResult;
     try {
       sendResult = await sendEskizSms({
         phoneNumber: normalizedPhone,
-        message: renderedBody,
+        message: finalBody,
       });
     } catch (eskizError) {
       const description =
@@ -579,7 +584,7 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
           templateId: template?.id ?? null,
           recipientCustomerId: recipientCustomer?.id ?? null,
           recipientPhone: normalizedPhone,
-          body: renderedBody,
+          body: finalBody,
           variables,
           status: "failed",
           category: "manual",
@@ -608,7 +613,7 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
         templateId: template?.id ?? null,
         recipientCustomerId: recipientCustomer?.id ?? null,
         recipientPhone: normalizedPhone,
-        body: renderedBody,
+        body: finalBody,
         variables,
         eskizMessageId: sendResult.eskizMessageId,
         eskizStatusRaw: sendResult.status,
