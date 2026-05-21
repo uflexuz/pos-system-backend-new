@@ -5,6 +5,7 @@ const http = require("http");
 const socketIO = require("socket.io");
 const { isDatabaseConnectionError } = require("./utils/databaseError");
 const { startBackupScheduler } = require("./utils/dbBackupScheduler");
+const { startSmsStatusScheduler } = require("./scheduler/smsStatusScheduler");
 
 const app = express();
 const server = http.createServer(app);
@@ -188,6 +189,7 @@ server.listen(PORT, () => {
   );
 
   startBackupScheduler();
+  startSmsStatusScheduler();
 });
 
 process.on("unhandledRejection", (reason) => {
