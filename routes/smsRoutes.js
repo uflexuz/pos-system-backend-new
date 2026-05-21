@@ -266,11 +266,26 @@ router.post("/templates", authMiddleware, requireAdminRole, async (req, res) => 
         });
       }
 
-      const { getEskizTemplates } = require("../utils/eskizSmsService");
-      const eskizTemplates = await getEskizTemplates();
-      const found = eskizTemplates.find(
-        (t) => String(t.id) === eskizTemplateId
-      );
+      const { getEskizTemplateById } = require("../utils/eskizSmsService");
+      
+      let found;
+      try {
+        // Try to fetch specific template by ID
+        found = await getEskizTemplateById(eskizTemplateId);
+      } catch (err) {
+        console.error(`[Eskiz] Failed to fetch template #${eskizTemplateId}:`, err.message);
+        
+        // If 403, provide helpful message about permissions
+        if (err.response?.status === 403) {
+          return res.status(403).json({
+            message: "Eskiz'da shablonlarni ko'rish huquqi yo'q. Iltimos, Eskiz kabinetida API kalitiga shablonlar bo'limiga kirish huquqini tekshiring.",
+          });
+        }
+        
+        return res.status(502).json({
+          message: `Eskiz'dan #${eskizTemplateId} shablonni olishda xatolik: ${err.message}`,
+        });
+      }
 
       if (!found) {
         return res.status(404).json({

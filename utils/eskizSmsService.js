@@ -251,12 +251,57 @@ async function getEskizTemplates(forceTokenRefresh = false) {
   }
 }
 
+async function getEskizTemplateById(templateId, forceTokenRefresh = false) {
+  const config = getEskizConfig();
+  if (!config.email || !config.password) {
+    throw new Error("Eskiz SMS sozlamalari to'liq emas");
+  }
+
+  const token = await getEskizToken(forceTokenRefresh);
+  try {
+    // Try to get single template by ID
+    const endpoint = `${config.baseUrl}/template/${templateId}`;
+    console.log(`[Eskiz] Fetching template by ID: ${endpoint}`);
+    
+    const response = await axios.get(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+    });
+    
+    const data = response.data || {};
+    const template = data.data || data;
+    
+    if (!template || !template.id) {
+      throw new Error(`Template #${templateId} not found`);
+    }
+    
+    return {
+      id: String(template.id),
+      body: template.body || "",
+      status: template.status || "",
+      ...template,
+    };
+  } catch (error) {
+    if (error.response?.status === 401 && !forceTokenRefresh) {
+      invalidateEskizToken();
+      return getEskizTemplateById(templateId, true);
+    }
+    console.error(`[Eskiz] Template by ID fetch error: ${error.message}`, {
+      templateId,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    throw error;
+  }
+}
+
 module.exports = {
   buildCustomerLedgerSms,
   sendCustomerLedgerSms,
   sendEskizSms,
   getEskizMessageStatus,
   getEskizTemplates,
+  getEskizTemplateById,
   isEskizConfigured,
   normalizePhoneNumber,
 };
