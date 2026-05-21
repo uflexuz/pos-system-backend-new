@@ -1,7 +1,7 @@
 const axios = require("axios");
 const FormData = require("form-data");
 
-const DEFAULT_ESKIZ_BASE_URL = "https://notify.eskiz.uz/api";
+const DEFAULT_ESKIZ_BASE_URL = "https://notify.eskiz.uz";
 const TOKEN_CACHE_TTL_MS = 50 * 60 * 1000;
 
 let cachedToken = null;
@@ -61,7 +61,8 @@ async function getEskizToken(forceRefresh = false) {
   formData.append("email", config.email);
   formData.append("password", config.password);
 
-  const response = await axios.post(`${config.baseUrl}/auth/login`, formData, {
+  // MunavvarA uses /api/auth/login
+  const response = await axios.post(`${config.baseUrl}/api/auth/login`, formData, {
     headers: formData.getHeaders(),
     timeout: 15000,
   });
@@ -104,8 +105,9 @@ async function sendEskizSms({ phoneNumber, message }, forceTokenRefresh = false)
   }
 
   try {
+    // MunavvarA uses POST /api/message/sms/send
     const response = await axios.post(
-      `${config.baseUrl}/message/sms/send`,
+      `${config.baseUrl}/api/message/sms/send`,
       formData,
       {
         headers: {
@@ -163,8 +165,9 @@ async function getEskizMessageStatus(eskizMessageId, forceTokenRefresh = false) 
   const config = getEskizConfig();
   const token = await getEskizToken(forceTokenRefresh);
   try {
+    // MunavvarA uses GET /api/message/sms/status_by_id/{id}
     const response = await axios.get(
-      `${config.baseUrl}/message/sms/status_by_id/${eskizMessageId}`,
+      `${config.baseUrl}/api/message/sms/status_by_id/${eskizMessageId}`,
       {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 15000,
@@ -202,42 +205,26 @@ async function getEskizTemplates(forceTokenRefresh = false) {
 
   const token = await getEskizToken(forceTokenRefresh);
   try {
-    // Try different endpoints as Eskiz API may vary
-    const endpoints = [
-      `${config.baseUrl}/template`,
-      `${config.baseUrl}/user/template`,
-      `${config.baseUrl}/api/template`,
-    ];
-
-    let lastError = null;
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`[Eskiz] Trying endpoint: ${endpoint}`);
-        const response = await axios.get(endpoint, {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 15000,
-        });
-        const data = response.data || {};
-        // Eskiz returns { data: [...] } or just [...]
-        const templates = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
-        console.log(`[Eskiz] Successfully fetched ${templates.length} templates from ${endpoint}`);
-        return templates.map(t => ({
-          id: String(t.id || ""),
-          body: t.body || "",
-          status: t.status || "",
-          ...t,
-        }));
-      } catch (err) {
-        lastError = err;
-        // Continue to next endpoint if 404
-        if (err.response?.status !== 404) {
-          throw err;
-        }
-      }
-    }
-
-    // All endpoints failed with 404 or other error
-    throw lastError || new Error("Eskiz template endpoints not available");
+    // MunavvarA uses GET /api/user/templates
+    const endpoint = `${config.baseUrl}/api/user/templates`;
+    console.log(`[Eskiz] Fetching templates from: ${endpoint}`);
+    
+    const response = await axios.get(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+    });
+    
+    const data = response.data || {};
+    // MunavvarA format: { result: [...] } or { data: [...] }
+    const templates = Array.isArray(data.result) ? data.result : Array.isArray(data.data) ? data.data : [];
+    console.log(`[Eskiz] Successfully fetched ${templates.length} templates`);
+    
+    return templates.map(t => ({
+      id: String(t.id || t.template_id || ""),
+      body: t.template || t.body || t.text || "",
+      status: t.status || "service",
+      ...t,
+    }));
   } catch (error) {
     if (error.response?.status === 401 && !forceTokenRefresh) {
       invalidateEskizToken();
@@ -252,47 +239,16 @@ async function getEskizTemplates(forceTokenRefresh = false) {
 }
 
 async function getEskizTemplateById(templateId, forceTokenRefresh = false) {
-  const config = getEskizConfig();
-  if (!config.email || !config.password) {
-    throw new Error("Eskiz SMS sozlamalari to'liq emas");
+  // MunavvarA doesn't have a direct "get by ID" endpoint
+  // We fetch the list and find the template by ID
+  const templates = await getEskizTemplates(forceTokenRefresh);
+  const found = templates.find(t => String(t.id) === String(templateId));
+  
+  if (!found) {
+    throw new Error(`Template #${templateId} not found in Eskiz`);
   }
-
-  const token = await getEskizToken(forceTokenRefresh);
-  try {
-    // Try to get single template by ID
-    const endpoint = `${config.baseUrl}/template/${templateId}`;
-    console.log(`[Eskiz] Fetching template by ID: ${endpoint}`);
-    
-    const response = await axios.get(endpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 15000,
-    });
-    
-    const data = response.data || {};
-    const template = data.data || data;
-    
-    if (!template || !template.id) {
-      throw new Error(`Template #${templateId} not found`);
-    }
-    
-    return {
-      id: String(template.id),
-      body: template.body || "",
-      status: template.status || "",
-      ...template,
-    };
-  } catch (error) {
-    if (error.response?.status === 401 && !forceTokenRefresh) {
-      invalidateEskizToken();
-      return getEskizTemplateById(templateId, true);
-    }
-    console.error(`[Eskiz] Template by ID fetch error: ${error.message}`, {
-      templateId,
-      status: error.response?.status,
-      data: error.response?.data,
-    });
-    throw error;
-  }
+  
+  return found;
 }
 
 module.exports = {

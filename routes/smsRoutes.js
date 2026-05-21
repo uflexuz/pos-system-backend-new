@@ -104,7 +104,7 @@ function transformTemplate(template) {
     // Eskiz-related fields (MunavvarA compatible)
     eskiz_template_id: template.eskizTemplateId,
     is_approved: template.isApproved,
-    status: template.status,
+    status: template.status || "service",
     is_imported: template.isImported,
     created_at: template.createdAt,
     updated_at: template.updatedAt,
@@ -177,15 +177,7 @@ router.get("/eskiz-templates", authMiddleware, requireAdminRole, async (req, res
     }
 
     const { getEskizTemplates } = require("../utils/eskizSmsService");
-    let eskizTemplates = [];
-    try {
-      eskizTemplates = await getEskizTemplates();
-    } catch (err) {
-      // Log the error but return empty list instead of failing
-      console.warn("[Eskiz] Could not fetch templates, returning empty list:", err.message);
-      // Return empty list - frontend will handle this gracefully
-      return res.json({ items: [], warning: "Eskiz'dan shablonlar olinmadi. Iltimos, shablon ID'sini qo'lda kiriting." });
-    }
+    const eskizTemplates = await getEskizTemplates();
 
     // Get already imported templates to mark them
     const importedTemplates = await prisma.smsTemplate.findMany({
@@ -195,20 +187,30 @@ router.get("/eskiz-templates", authMiddleware, requireAdminRole, async (req, res
     const importedIds = new Set(importedTemplates.map(t => t.eskizTemplateId));
 
     // Transform to MunavvarA format
-    const items = eskizTemplates.map(t => ({
-      eskiz_template_id: String(t.id),
-      body: t.body || "",
-      variables: extractVariableKeys(t.body || ""),
-      is_approved: t.status === "approved" || t.status === "active",
-      status: t.status || null,
-      is_imported: importedIds.has(String(t.id)),
-    }));
+    const items = eskizTemplates.map(t => {
+      const body = t.template || t.body || t.text || "";
+      const status = t.status || "service";
+      return {
+        eskiz_template_id: String(t.id || t.template_id),
+        body: body,
+        variables: extractVariableKeys(body),
+        status: status,
+        is_approved: status === "approved" || status === "active" || status === "service",
+        is_imported: importedIds.has(String(t.id || t.template_id)),
+      };
+    });
 
-    return res.json({ items });
+    // MunavvarA format: return items and total
+    return res.json({ 
+      items,
+      total: items.length 
+    });
   } catch (error) {
-    console.error("Eskiz templates endpoint error:", error.message);
-    // Return empty array instead of error to keep UI functional
-    return res.json({ items: [], warning: "Eskiz'dan shablonlar olinmadi" });
+    console.error("Eskiz templates fetch error:", error.message);
+    // Return error like MunavvarA does - don't hide errors
+    const status = error.response?.status || 502;
+    const message = error.response?.data?.message || error.message || "Eskiz'dan shablonlarni olishda xatolik";
+    return res.status(status).json({ message });
   }
 });
 
@@ -293,8 +295,9 @@ router.post("/templates", authMiddleware, requireAdminRole, async (req, res) => 
         });
       }
 
-      const status = found.status || "";
-      const isApproved = status === "approved" || status === "active";
+      const status = found.status || "service";
+      // MunavvarA: status "service" means approved
+      const isApproved = status === "approved" || status === "active" || status === "service";
       if (!isApproved) {
         return res.status(400).json({
           message: `Shablon Eskiz tomonidan tasdiqlanmagan (status: ${status})`,
@@ -311,7 +314,8 @@ router.post("/templates", authMiddleware, requireAdminRole, async (req, res) => 
         });
       }
 
-      const body = found.body || "";
+      // MunavvarA format: body is in 'template' field
+      const body = found.template || found.body || found.text || "";
       const variables = extractVariableKeys(body);
       const name = `Eskiz #${eskizTemplateId}`;
 
