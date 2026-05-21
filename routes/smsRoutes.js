@@ -101,6 +101,11 @@ function transformTemplate(template) {
     variables: Array.isArray(template.variables) ? template.variables : [],
     description: template.description,
     is_active: template.isActive,
+    // Eskiz-related fields (MunavvarA compatible)
+    eskiz_template_id: template.eskizTemplateId,
+    is_approved: template.isApproved,
+    status: template.status,
+    is_imported: template.isImported,
     created_at: template.createdAt,
     updated_at: template.updatedAt,
   };
@@ -162,6 +167,44 @@ function buildDateFilter(dateFrom, dateTo) {
 
 // ─── Templates ────────────────────────────────────────────────────────────
 
+// Get templates from Eskiz API (MunavvarA compatible)
+router.get("/eskiz-templates", authMiddleware, requireAdminRole, async (req, res) => {
+  try {
+    if (!isEskizConfigured()) {
+      return res.status(503).json({
+        message: "Eskiz SMS sozlamalari topilmadi. .env ni tekshiring.",
+      });
+    }
+
+    const { getEskizTemplates } = require("../utils/eskizSmsService");
+    const eskizTemplates = await getEskizTemplates();
+
+    // Get already imported templates to mark them
+    const importedTemplates = await prisma.smsTemplate.findMany({
+      where: { isImported: true },
+      select: { eskizTemplateId: true },
+    });
+    const importedIds = new Set(importedTemplates.map(t => t.eskizTemplateId));
+
+    // Transform to MunavvarA format
+    const items = eskizTemplates.map(t => ({
+      eskiz_template_id: String(t.id),
+      body: t.body || "",
+      variables: extractVariableKeys(t.body || ""),
+      is_approved: t.status === "approved" || t.status === "active",
+      status: t.status || null,
+      is_imported: importedIds.has(String(t.id)),
+    }));
+
+    return res.json({ items });
+  } catch (error) {
+    console.error("Eskiz templates fetch error:", error.message);
+    return res
+      .status(502)
+      .json({ message: "Eskiz'dan shablonlarni olishda xatolik" });
+  }
+});
+
 router.get("/templates", authMiddleware, requireAdminRole, async (req, res) => {
   try {
     const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
@@ -203,6 +246,82 @@ router.get("/templates", authMiddleware, requireAdminRole, async (req, res) => {
 
 router.post("/templates", authMiddleware, requireAdminRole, async (req, res) => {
   try {
+    // Check if this is an import from Eskiz (MunavvarA style)
+    const eskizTemplateId = req.body?.eskiz_template_id
+      ? String(req.body.eskiz_template_id).trim()
+      : null;
+
+    if (eskizTemplateId) {
+      // Import from Eskiz
+      if (!isEskizConfigured()) {
+        return res.status(503).json({
+          message: "Eskiz SMS sozlamalari topilmadi. .env ni tekshiring.",
+        });
+      }
+
+      const { getEskizTemplates } = require("../utils/eskizSmsService");
+      const eskizTemplates = await getEskizTemplates();
+      const found = eskizTemplates.find(
+        (t) => String(t.id) === eskizTemplateId
+      );
+
+      if (!found) {
+        return res.status(404).json({
+          message: `Eskiz'da #${eskizTemplateId} ID'li shablon topilmadi`,
+        });
+      }
+
+      const status = found.status || "";
+      const isApproved = status === "approved" || status === "active";
+      if (!isApproved) {
+        return res.status(400).json({
+          message: `Shablon Eskiz tomonidan tasdiqlanmagan (status: ${status})`,
+        });
+      }
+
+      // Check if already imported
+      const existingByEskizId = await prisma.smsTemplate.findUnique({
+        where: { eskizTemplateId: eskizTemplateId },
+      });
+      if (existingByEskizId) {
+        return res.status(409).json({
+          message: "Bu shablon avval import qilingan",
+        });
+      }
+
+      const body = found.body || "";
+      const variables = extractVariableKeys(body);
+      const name = `Eskiz #${eskizTemplateId}`;
+
+      // Check for name collision
+      const existingByName = await prisma.smsTemplate.findUnique({
+        where: { name },
+      });
+      if (existingByName) {
+        return res.status(409).json({
+          message: "Bu nomdagi shablon allaqachon mavjud!",
+        });
+      }
+
+      const created = await prisma.smsTemplate.create({
+        data: {
+          id: newId(),
+          name,
+          body,
+          description: `Imported from Eskiz #${eskizTemplateId}`,
+          variables,
+          isActive: true,
+          eskizTemplateId: eskizTemplateId,
+          isApproved: true,
+          status: status,
+          isImported: true,
+        },
+      });
+
+      return res.status(201).json(transformTemplate(created));
+    }
+
+    // Regular manual template creation
     const name = String(req.body?.name ?? "").trim();
     const body = String(req.body?.body ?? "").trim();
     const description = req.body?.description

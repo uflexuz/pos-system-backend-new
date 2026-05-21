@@ -194,11 +194,45 @@ async function getEskizMessageStatus(eskizMessageId, forceTokenRefresh = false) 
   }
 }
 
+async function getEskizTemplates(forceTokenRefresh = false) {
+  const config = getEskizConfig();
+  if (!config.email || !config.password) {
+    throw new Error("Eskiz SMS sozlamalari to'liq emas");
+  }
+
+  const token = await getEskizToken(forceTokenRefresh);
+  try {
+    const response = await axios.get(
+      `${config.baseUrl}/template`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 15000,
+      }
+    );
+    const data = response.data || {};
+    // Eskiz returns { data: [...] } or just [...]
+    const templates = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+    return templates.map(t => ({
+      id: String(t.id || ""),
+      body: t.body || "",
+      status: t.status || "",
+      ...t,
+    }));
+  } catch (error) {
+    if (error.response?.status === 401 && !forceTokenRefresh) {
+      invalidateEskizToken();
+      return getEskizTemplates(true);
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   buildCustomerLedgerSms,
   sendCustomerLedgerSms,
   sendEskizSms,
   getEskizMessageStatus,
+  getEskizTemplates,
   isEskizConfigured,
   normalizePhoneNumber,
 };
