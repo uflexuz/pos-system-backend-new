@@ -585,6 +585,11 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
         .json({ message: "SMS matni bo'sh bo'lishi mumkin emas. Shablon tanlang yoki matn kiriting." });
     }
 
+    // Calculate SMS parts and cost (minimum 115 so'm per SMS)
+    const smsParts = Math.max(1, Math.ceil(finalBody.length / 70));
+    const minCostPerSms = 115;
+    const totalCost = smsParts * minCostPerSms;
+
     let sendResult;
     try {
       sendResult = await sendEskizSms({
@@ -611,6 +616,8 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
           senderAdminId: req.user?.adminId ?? null,
           sentAt: new Date(),
           statusCheckedAt: new Date(),
+          partsCount: smsParts,
+          cost: totalCost, // Even failed SMS has minimum cost
         },
         include: { template: true, recipientCustomer: true },
       });
@@ -641,6 +648,8 @@ router.post("/messages", authMiddleware, requireAdminRole, async (req, res) => {
         senderAdminId: req.user?.adminId ?? null,
         sentAt: new Date(),
         statusCheckedAt: new Date(),
+        partsCount: smsParts,
+        cost: totalCost, // Minimum 115 so'm per SMS part
       },
       include: { template: true, recipientCustomer: true },
     });
