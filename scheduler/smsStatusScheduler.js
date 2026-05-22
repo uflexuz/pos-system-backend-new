@@ -1,13 +1,11 @@
 // SMS Status Auto-Refresh Scheduler
 // Refreshes "pending" SMS statuses every 60 minutes
 
-const { PrismaClient } = require("@prisma/client");
 const {
   getEskizMessageStatus,
   isEskizConfigured,
 } = require("../utils/eskizSmsService");
-
-const prisma = new PrismaClient();
+const prisma = require("../config/prisma");
 
 // Map Eskiz status to internal status
 const mapEskizStatus = (rawStatus) => {
