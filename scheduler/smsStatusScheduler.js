@@ -51,9 +51,14 @@ async function refreshPendingSmsStatuses() {
         const newStatus = mapEskizStatus(statusResult.status);
 
         // Only update if status changed
-        if (newStatus !== message.status || statusResult.status !== message.eskizStatusRaw) {
+        if (
+          newStatus !== message.status ||
+          statusResult.status !== message.eskizStatusRaw ||
+          !message.eskizStatusData
+        ) {
           const data = {
             eskizStatusRaw: statusResult.status,
+            eskizStatusData: statusResult.raw || null,
             status: newStatus,
             statusCheckedAt: new Date(),
             updatedAt: new Date(),
@@ -64,6 +69,9 @@ async function refreshPendingSmsStatuses() {
           }
           if (statusResult.totalPrice != null) {
             data.cost = statusResult.totalPrice;
+          }
+          if (statusResult.sentAt) {
+            data.sentAt = statusResult.sentAt;
           }
           if (newStatus === "delivered" && !message.deliveredAt) {
             data.deliveredAt = statusResult.deliveryAt || new Date();

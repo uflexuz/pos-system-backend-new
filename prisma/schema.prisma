@@ -189,6 +189,7 @@ model SmsMessage {
   variables           Json      @default("{}")
   eskizMessageId      String?   @unique @map("eskiz_message_id")
   eskizStatusRaw      String?   @map("eskiz_status_raw")
+  eskizStatusData     Json?     @map("eskiz_status_data")
   status              String    @default("pending")
   category            String    @default("manual")
   partsCount          Int?      @map("parts_count")

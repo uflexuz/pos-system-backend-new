@@ -124,6 +124,7 @@ function transformMessage(message, { sender } = {}) {
     variables: message.variables || {},
     eskiz_message_id: message.eskizMessageId,
     eskiz_status_raw: message.eskizStatusRaw,
+    eskiz_status_data: message.eskizStatusData || null,
     status: message.status,
     category: message.category,
     parts_count: message.partsCount,
@@ -801,6 +802,7 @@ router.post(
       const newStatus = mapEskizStatus(statusResult.status);
       const data = {
         eskizStatusRaw: statusResult.status,
+        eskizStatusData: statusResult.raw || null,
         status: newStatus,
         statusCheckedAt: new Date(),
         updatedAt: new Date(),
@@ -810,6 +812,9 @@ router.post(
       }
       if (statusResult.totalPrice != null) {
         data.cost = statusResult.totalPrice;
+      }
+      if (statusResult.sentAt) {
+        data.sentAt = statusResult.sentAt;
       }
       if (newStatus === "delivered" && !message.deliveredAt) {
         data.deliveredAt = statusResult.deliveryAt || new Date();

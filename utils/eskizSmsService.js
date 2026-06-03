@@ -174,10 +174,14 @@ async function getEskizMessageStatus(eskizMessageId, forceTokenRefresh = false) 
       }
     );
     const data = response.data || {};
-    const body = data.data || {};
+    const body = data.data || data || {};
     const status = body.status || data.status || "waiting";
     const partsCount = body.parts_count ?? data.parts_count ?? null;
     const totalPrice = body.total_price ?? data.total_price ?? null;
+    const price = body.price ?? data.price ?? null;
+    const sentAtRaw = body.sent_at || data.sent_at || null;
+    const submitAtRaw =
+      body.submit_sm_resp_at || data.submit_sm_resp_at || null;
     const deliveryAtRaw =
       body.delivery_sm_at || body.submit_sm_resp_at || body.sent_at || null;
     return {
@@ -185,7 +189,11 @@ async function getEskizMessageStatus(eskizMessageId, forceTokenRefresh = false) 
       status: String(status),
       partsCount: partsCount != null ? Number(partsCount) : null,
       totalPrice: totalPrice != null ? Number(totalPrice) : null,
+      price: price != null ? Number(price) : null,
+      sentAt: sentAtRaw ? new Date(sentAtRaw) : null,
+      submitAt: submitAtRaw ? new Date(submitAtRaw) : null,
       deliveryAt: deliveryAtRaw ? new Date(deliveryAtRaw) : null,
+      body,
       raw: data,
     };
   } catch (error) {
