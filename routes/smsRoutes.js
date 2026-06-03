@@ -841,15 +841,22 @@ router.post(
 
 router.get("/analytics", authMiddleware, requireAdminRole, async (req, res) => {
   try {
-    const now = new Date();
-    const dateTo = parseDate(req.query.date_to) || now;
-    const dateFrom =
-      parseDate(req.query.date_from) ||
-      new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const dateFilter = buildDateFilter(req.query.date_from, req.query.date_to);
+    const baseWhere = dateFilter ? { createdAt: dateFilter } : {};
 
-    const baseWhere = {
-      createdAt: { gte: dateFrom, lte: dateTo },
-    };
+    const dailyWhere = [];
+    const dailyParams = [];
+    if (dateFilter?.gte) {
+      dailyParams.push(dateFilter.gte);
+      dailyWhere.push(`"created_at" >= $${dailyParams.length}`);
+    }
+    if (dateFilter?.lte) {
+      dailyParams.push(dateFilter.lte);
+      dailyWhere.push(`"created_at" <= $${dailyParams.length}`);
+    }
+    const dailyWhereSql = dailyWhere.length
+      ? `WHERE ${dailyWhere.join(" AND ")}`
+      : "";
 
     const [byStatus, totals, templateUsage, dailyRows] = await Promise.all([
       prisma.smsMessage.groupBy({
@@ -879,12 +886,11 @@ router.get("/analytics", authMiddleware, requireAdminRole, async (req, res) => {
             WHERE "status" IN ('rejected','undelivered','expired','failed')
           ) ::int AS failed
         FROM "sms_messages"
-        WHERE "created_at" >= $1 AND "created_at" <= $2
+        ${dailyWhereSql}
         GROUP BY 1
         ORDER BY 1 ASC
         `,
-        dateFrom,
-        dateTo
+        ...dailyParams
       ),
     ]);
 
