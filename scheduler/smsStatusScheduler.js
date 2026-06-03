@@ -11,6 +11,7 @@ const prisma = require("../config/prisma");
 const mapEskizStatus = (rawStatus) => {
   if (!rawStatus) return "pending";
   const status = rawStatus.toLowerCase();
+  if (["accepted", "acceptd"].includes(status)) return "pending";
   if (["delivered", "delivrd"].includes(status)) return "delivered";
   if (["rejected", "rejectd"].includes(status)) return "rejected";
   if (["undelivered", "undeliv"].includes(status)) return "undelivered";

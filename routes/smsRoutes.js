@@ -32,6 +32,8 @@ const PENDING_RAW = new Set([
   "store",
   "stored",
   "enroute",
+  "accepted",
+  "acceptd",
 ]);
 const DELIVERED_RAW = new Set(["delivered", "delivrd"]);
 const REJECTED_RAW = new Set(["rejected", "rejectd"]);
@@ -47,6 +49,15 @@ function mapEskizStatus(raw) {
   if (UNDELIVERED_RAW.has(candidate)) return "undelivered";
   if (EXPIRED_RAW.has(candidate)) return "expired";
   return "failed";
+}
+
+function effectiveMessageStatus(message) {
+  if (!message?.eskizStatusRaw) return message?.status;
+  const mappedRaw = mapEskizStatus(message.eskizStatusRaw);
+  if (mappedRaw !== "failed" || String(message.eskizStatusRaw).toLowerCase() === "failed") {
+    return mappedRaw;
+  }
+  return message.status;
 }
 
 function newId() {
@@ -125,7 +136,7 @@ function transformMessage(message, { sender } = {}) {
     eskiz_message_id: message.eskizMessageId,
     eskiz_status_raw: message.eskizStatusRaw,
     eskiz_status_data: message.eskizStatusData || null,
-    status: message.status,
+    status: effectiveMessageStatus(message),
     category: message.category,
     parts_count: message.partsCount,
     cost: message.cost != null ? Number(message.cost) : null,
