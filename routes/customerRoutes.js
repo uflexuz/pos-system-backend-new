@@ -77,13 +77,43 @@ async function notifyCustomerLedgerSms(customer, transaction) {
 function buildDateFilter(startDate, endDate) {
   if (!startDate && !endDate) return undefined;
   const filter = {};
-  if (startDate) filter.gte = new Date(startDate);
-  if (endDate) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-    filter.lte = end;
+  if (startDate) {
+    const start = parseLedgerDate(startDate);
+    if (start) filter.gte = start;
   }
-  return filter;
+  if (endDate) {
+    const end = parseLedgerDate(endDate);
+    if (end) {
+      end.setHours(23, 59, 59, 999);
+      filter.lte = end;
+    }
+  }
+  return Object.keys(filter).length > 0 ? filter : undefined;
+}
+
+function parseLedgerDate(value, fallbackTime = null) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      return new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        fallbackTime ? fallbackTime.getHours() : 0,
+        fallbackTime ? fallbackTime.getMinutes() : 0,
+        fallbackTime ? fallbackTime.getSeconds() : 0,
+        fallbackTime ? fallbackTime.getMilliseconds() : 0
+      );
+    }
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseTransactionDate(value) {
+  if (!value) return new Date();
+  return parseLedgerDate(value, new Date()) || new Date();
 }
 
 // GET /ledger — customer money movement report
@@ -197,7 +227,7 @@ router.post("/ledger", authMiddleware, async (req, res) => {
           notes: notes ? String(notes).trim() : null,
           balanceBefore,
           balanceAfter,
-          transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
+          transactionDate: parseTransactionDate(transactionDate),
         },
         include: { customer: true },
       });
