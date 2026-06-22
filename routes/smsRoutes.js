@@ -21,7 +21,7 @@ const SMS_STATUSES = new Set([
   "failed",
 ]);
 
-const SMS_CATEGORIES = new Set(["manual", "otp"]);
+const SMS_CATEGORIES = new Set(["manual", "otp", "ledger"]);
 
 const VARIABLE_REGEX = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 
@@ -972,3 +972,4 @@ router.get("/analytics", authMiddleware, requireAdminRole, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.mapEskizStatus = mapEskizStatus;

@@ -2,7 +2,12 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
-const { sendCustomerLedgerSms } = require("../utils/eskizSmsService");
+const {
+  sendCustomerLedgerSms,
+  buildCustomerLedgerSms,
+  normalizePhoneNumber,
+} = require("../utils/eskizSmsService");
+const { mapEskizStatus } = require("./smsRoutes");
 
 const router = express.Router();
 
@@ -58,19 +63,60 @@ function normalizeCustomerPayload(body) {
 }
 
 async function notifyCustomerLedgerSms(customer, transaction) {
+  const messageBody = buildCustomerLedgerSms({
+    type: transaction.type,
+    amount: transaction.amount,
+    balanceBefore: transaction.balanceBefore,
+    balanceAfter: transaction.balanceAfter,
+  });
+  const recipientPhone = normalizePhoneNumber(customer?.phoneNumber || "");
+  const partsCount = Math.max(1, Math.ceil(messageBody.length / 70));
+  const cost = partsCount * 115;
+
+  let smsResult;
   try {
-    const smsResult = await sendCustomerLedgerSms(customer, transaction);
+    smsResult = await sendCustomerLedgerSms(customer, transaction);
     if (smsResult?.skipped) {
       console.warn("Customer ledger SMS skipped:", smsResult.error);
     }
-    return smsResult;
   } catch (error) {
     const errorMessage =
       error.response?.data?.message ||
       error.response?.data?.error ||
       error.message;
     console.error("Customer ledger SMS error:", errorMessage);
-    return { success: false, error: errorMessage };
+    smsResult = { success: false, error: errorMessage };
+  }
+
+  // Save SMS record to database regardless of send outcome
+  try {
+    const now = new Date();
+    const status = smsResult?.skipped || !smsResult?.success
+      ? "failed"
+      : mapEskizStatus(smsResult.status);
+
+    const savedSms = await prisma.smsMessage.create({
+      data: {
+        id: crypto.randomBytes(12).toString("hex"),
+        body: messageBody,
+        recipientPhone,
+        recipientCustomerId: customer?.id ?? null,
+        status,
+        category: "ledger",
+        eskizMessageId: smsResult?.eskizMessageId ?? null,
+        eskizStatusRaw: smsResult?.status ?? null,
+        partsCount,
+        cost,
+        senderAdminId: null,
+        sentAt: now,
+        statusCheckedAt: now,
+        errorMessage: smsResult?.error ?? null,
+      },
+    });
+    return { ...smsResult, savedSms };
+  } catch (dbError) {
+    console.error("Customer ledger SMS DB save error:", dbError.message);
+    return smsResult;
   }
 }
 
@@ -248,7 +294,17 @@ router.post("/ledger", authMiddleware, async (req, res) => {
     return res.status(201).json({
       transaction: transformLedgerTransaction(result.transaction),
       customer: transformCustomer(result.customer),
-      sms: smsResult,
+      sms: smsResult?.savedSms
+        ? {
+            id: smsResult.savedSms.id,
+            status: smsResult.savedSms.status,
+            category: smsResult.savedSms.category,
+            eskiz_message_id: smsResult.savedSms.eskizMessageId,
+            parts_count: smsResult.savedSms.partsCount,
+            cost: smsResult.savedSms.cost,
+            sent_at: smsResult.savedSms.sentAt,
+          }
+        : smsResult,
     });
   } catch (error) {
     console.error("Customer ledger create error:", error.message);
