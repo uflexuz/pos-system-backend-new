@@ -94,7 +94,7 @@ app.use("/api/admin/login", loginLimiter);
 app.use("/api/worker/login", loginLimiter);
 
 // Connect to PostgreSQL (instead of MongoDB)
-const { connect: connectPg } = require("./config/pgdb");
+const { connect: connectPg, pool: pgPool } = require("./config/pgdb");
 const prisma = require("./config/prisma");
 connectPg();
 
@@ -142,6 +142,21 @@ const healthHandler = (req, res) => {
 };
 app.get("/health", healthHandler);
 app.get("/api/health", healthHandler);
+
+// DB ulanish tashxisi — Railway DATABASE/PG_CONNECTION to'g'ri sozlanganini
+// brauzerdan tekshirish uchun. SELECT 1 ishlasa DB tirik.
+app.get("/api/health/db", async (req, res) => {
+  try {
+    const result = await pgPool.query("SELECT 1 AS ok");
+    res.status(200).json({ db: "ok", result: result.rows[0] });
+  } catch (error) {
+    res.status(503).json({
+      db: "down",
+      error: error.message,
+      hint: "Railway'da PG_CONNECTION (runtime shu env'ni o'qiydi) to'g'ri va Postgres ishlayotganini tekshiring.",
+    });
+  }
+});
 
 // Static files (1 kun cache bilan — takroriy yuklashlarni tezlashtiradi).
 app.use(express.static("public", { maxAge: "1d" }));

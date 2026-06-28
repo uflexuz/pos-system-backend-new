@@ -58,7 +58,11 @@ const pool = new Pool({
   connectionString,
   max: 10,
   idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 30000,
+  // DB javob bermasa 5s ichida xato beramiz (reverse-proxy 502 o'rniga toza 503).
+  connectionTimeoutMillis: 5000,
+  // Bitta so'rov 15s dan oshmasin — osilib qolgan ulanishlarni oldini oladi.
+  statement_timeout: 15000,
+  query_timeout: 15000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 5000,
   allowExitOnIdle: false,
