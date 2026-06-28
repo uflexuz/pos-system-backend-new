@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
+const compression = require("compression");
+const morgan = require("morgan");
+const rateLimit = require("express-rate-limit");
 const socketIO = require("socket.io");
 const { isDatabaseConnectionError } = require("./utils/databaseError");
 const { startBackupScheduler } = require("./utils/dbBackupScheduler");
@@ -10,10 +13,32 @@ const { startSmsStatusScheduler } = require("./scheduler/smsStatusScheduler");
 const app = express();
 const server = http.createServer(app);
 
+// Railway/Heroku kabi reverse-proxy ortida real IP va protokolni to'g'ri
+// aniqlash uchun (rate-limit va https aniqlash uchun zarur).
+app.set("trust proxy", 1);
+
+// Ruxsat etilgan CORS originlar — ALLOWED_ORIGINS env (vergul bilan ajratilgan).
+// Bo'sh bo'lsa barcha originlarga ruxsat (kassa ilovasi/local dev uchun qulay).
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
+const corsOrigin =
+  ALLOWED_ORIGINS.length > 0
+    ? (origin, callback) => {
+        // origin yo'q (native app/curl) yoki ro'yxatda bo'lsa ruxsat beriladi.
+        if (!origin || ALLOWED_ORIGINS.includes(origin.replace(/\/+$/, ""))) {
+          return callback(null, true);
+        }
+        return callback(new Error("CORS: ruxsat etilmagan origin"));
+      }
+    : "*";
+
 // Socket.IO setup
 const io = socketIO(server, {
   cors: {
-    origin: "*",
+    origin: ALLOWED_ORIGINS.length > 0 ? ALLOWED_ORIGINS : "*",
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -31,21 +56,42 @@ io.on("connection", (socket) => {
   });
 });
 
+// Javoblarni gzip bilan siqish — tarmoq tezligi va trafikni sezilarli kamaytiradi.
+app.use(compression());
+
+// So'rovlar logi — productionda ixcham, developmentda batafsil rangli format.
+const isProduction = process.env.NODE_ENV === "production";
+app.use(morgan(isProduction ? "combined" : "dev"));
+
 // Middleware
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// CORS configuration - barcha originlarga ruxsat
+// CORS configuration — ALLOWED_ORIGINS bo'sh bo'lsa barchasiga ruxsat.
 app.use(
   cors({
-    origin: "*", // Barcha originlarga ruxsat
+    origin: corsOrigin,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allowedHeaders: "*", // Barcha headerlarga ruxsat
+    allowedHeaders: "*",
     exposedHeaders: ["Authorization"],
     optionsSuccessStatus: 200,
   }),
 );
+
+// Login endpointlari uchun rate-limit — brute-force hujumlardan himoya.
+// 15 daqiqada bir IP'dan maksimal 20 urinish.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: "Juda ko'p urinish. 15 daqiqadan so'ng qayta urinib ko'ring.",
+  },
+});
+app.use("/api/admin/login", loginLimiter);
+app.use("/api/worker/login", loginLimiter);
 
 // Connect to PostgreSQL (instead of MongoDB)
 const { connect: connectPg } = require("./config/pgdb");
@@ -83,8 +129,22 @@ app.use((req, res, next) => {
 // Make prisma available to routes
 app.set("prisma", prisma);
 
-// Static files
-app.use(express.static("public"));
+// Health check — monitoring va frontend ulanish tekshiruvi uchun.
+// Tashqi xizmatlar (Railway, uptime monitor) va kassa ilovasi shu yerdan
+// serverning tirikligini bilib oladi.
+const healthHandler = (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || "development",
+  });
+};
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler);
+
+// Static files (1 kun cache bilan — takroriy yuklashlarni tezlashtiradi).
+app.use(express.static("public", { maxAge: "1d" }));
 
 // API routes
 app.use("/api/admin", require("./routes/authRoutes"));
