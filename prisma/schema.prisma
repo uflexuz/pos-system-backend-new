@@ -70,8 +70,10 @@ model Product {
   name                String?
   categoryKey         String?  @map("category")
   image               String?
+  imageKey            String?  @map("image_key")
   telegramMessageId   String?  @map("telegram_message_id")
   sku                 String?  @unique
+  barcode             String?  @unique
   unit                String?
   salePrice           Decimal? @map("sale_price") @db.Decimal
   costPrice           Decimal? @map("cost_price") @db.Decimal

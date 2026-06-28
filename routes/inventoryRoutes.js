@@ -2,7 +2,6 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
-const { isTelegramBackedImage } = require("../utils/telegramService");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -21,21 +20,17 @@ function toNumber(val) {
 function getPublicProductImagePath(product) {
   if (!product) return "";
 
-  if (product.telegramMessageId) {
+  const img = product.image ? String(product.image) : "";
+
+  if (img && (/^https?:\/\//i.test(img) || img.startsWith("/api/products/image/"))) {
+    return img;
+  }
+
+  if (product.imageKey) {
     return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
   }
 
-  if (!product.image) return product.image || "";
-
-  if (String(product.image).startsWith("/api/products/image/")) {
-    return product.image;
-  }
-
-  if (isTelegramBackedImage(product.image)) {
-    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
-  }
-
-  return product.image;
+  return img;
 }
 
 function mapProduct(product) {
@@ -54,6 +49,7 @@ function mapProduct(product) {
   }
 
   mapped.image = getPublicProductImagePath(mapped);
+  delete mapped.imageKey;
   delete mapped.telegramMessageId;
 
   return mapped;

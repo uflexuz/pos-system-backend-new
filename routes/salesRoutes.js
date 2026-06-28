@@ -2,12 +2,11 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
-const { isTelegramBackedImage } = require("../utils/telegramService");
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const SALE_STATUSES = new Set(["completed", "cancelled"]);
+const SALE_STATUSES = new Set(["completed", "cancelled", "open"]);
 const SALE_PAYMENT_TYPES = new Set(["cash", "card", "mixed"]);
 const APP_TIMEZONE_OFFSET_MINUTES = 5 * 60; // Asia/Tashkent
 
@@ -62,21 +61,17 @@ function toNumber(val) {
 function getPublicProductImagePath(product) {
   if (!product) return "";
 
-  if (product.telegramMessageId) {
+  const img = product.image ? String(product.image) : "";
+
+  if (img && (/^https?:\/\//i.test(img) || img.startsWith("/api/products/image/"))) {
+    return img;
+  }
+
+  if (product.imageKey) {
     return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
   }
 
-  if (!product.image) return product.image || "";
-
-  if (String(product.image).startsWith("/api/products/image/")) {
-    return product.image;
-  }
-
-  if (isTelegramBackedImage(product.image)) {
-    return product.sku ? `/api/products/image/${encodeURIComponent(product.sku)}` : "";
-  }
-
-  return product.image;
+  return img;
 }
 
 function transformProduct(product) {
@@ -85,6 +80,7 @@ function transformProduct(product) {
   if (mapped.salePrice != null) mapped.salePrice = Number(mapped.salePrice);
   if (mapped.costPrice != null) mapped.costPrice = Number(mapped.costPrice);
   mapped.image = getPublicProductImagePath(mapped);
+  delete mapped.imageKey;
   delete mapped.telegramMessageId;
   return mapped;
 }
@@ -192,6 +188,10 @@ router.get("/", async (req, res) => {
     if (statusError) {
       return res.status(400).json({ message: statusError });
     }
+    // Ochiq (draft) savdolar tarix ro'yxatida ko'rsatilmaydi (GET /pending dan olinadi)
+    if (!req.query.status) {
+      where.status = { not: "open" };
+    }
     if (req.query.paymentType) where.paymentType = req.query.paymentType;
     if (req.query.search) {
       where.OR = [
@@ -277,6 +277,33 @@ const fullSaleInclude = {
   customer: true,
 };
 
+// GET /pending — Ochiq (draft) savdolar (app "Buyurtmalar" tab uchun)
+// MUHIM: bu route GET /:id dan OLDIN bo'lishi shart
+router.get("/pending", async (req, res) => {
+  try {
+    const where = { status: "open" };
+    if (req.query.branch) where.branchId = req.query.branch;
+    if (req.user?.workerId) where.sellerId = req.user.workerId;
+
+    const sales = await prisma.sale.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: fullSaleInclude,
+    });
+
+    const orders = sales.map((sale) => {
+      const transformed = transformSale(sale);
+      transformed.status = "pending";
+      return transformed;
+    });
+
+    return res.json({ orders, sales: orders });
+  } catch (error) {
+    console.error("Get pending sales error:", error.message);
+    return res.status(500).json({ message: "Server xatoligi!" });
+  }
+});
+
 // GET /:id — Get single sale
 router.get("/:id", async (req, res) => {
   try {
@@ -307,11 +334,15 @@ router.post("/", async (req, res) => {
       branchId, sellerId, waiterId,
       items, discount, discountType, paymentType, paymentDetails,
       tax, taxPercent, taxAmount, notes, saleDate, customerId,
+      status, open,
     } = req.body;
 
     if (!items || !items.length) {
       return res.status(400).json({ message: "Mahsulotlar kiritilmagan!" });
     }
+
+    // Ochiq (draft) savdo: ombor kamaymaydi, chek bosilmaydi
+    const isDraft = open === true || String(status || "").toLowerCase() === "open";
 
     // Fetch product prices
     const productIds = items.map((i) => i.productId);
@@ -345,9 +376,13 @@ router.post("/", async (req, res) => {
     const discountAmount = discount || 0;
     const total = Math.max(0, Math.round(subtotalWithTax - discountAmount));
 
-    const paymentData = normalizeSalePayment(paymentType, paymentDetails, total);
-    if (paymentData.error) {
-      return res.status(400).json({ message: paymentData.error });
+    // Draft uchun to'lov tekshirilmaydi
+    let paymentData = { paymentType: null, paymentDetails: null };
+    if (!isDraft) {
+      paymentData = normalizeSalePayment(paymentType, paymentDetails, total);
+      if (paymentData.error) {
+        return res.status(400).json({ message: paymentData.error });
+      }
     }
 
     const saleNumber = await generateSaleNumber();
@@ -371,7 +406,7 @@ router.post("/", async (req, res) => {
         taxPercent: taxPercent || 0,
         paymentType: paymentData.paymentType,
         paymentDetails: paymentData.paymentDetails,
-        status: "completed",
+        status: isDraft ? "open" : "completed",
         notes: notes || null,
         customerId: customerId || null,
         items: {
@@ -381,15 +416,17 @@ router.post("/", async (req, res) => {
       include: fullSaleInclude,
     });
 
-    // Deduct inventory
-    if (branchId) {
-      await deductInventory(branchId, saleItems).catch((err) =>
-        console.error("Inventory deduct error:", err.message)
-      );
-    }
-
     const transformed = transformSale(sale);
-    emitSaleEvent(req, "new_sale", transformed);
+
+    // Draft bo'lsa: ombor kamaymaydi, chek bosilmaydi
+    if (!isDraft) {
+      if (branchId) {
+        await deductInventory(branchId, saleItems).catch((err) =>
+          console.error("Inventory deduct error:", err.message)
+        );
+      }
+      emitSaleEvent(req, "new_sale", transformed);
+    }
 
     return res.status(201).json({ success: true, sale: transformed });
   } catch (error) {
@@ -605,8 +642,16 @@ router.post("/:id/close", async (req, res) => {
       include: fullSaleInclude,
     });
 
+    // Draft yopilganda ombor endi kamayadi (oddiy savdoda POST / da kamaygan)
+    if (sale.branchId) {
+      await deductInventory(sale.branchId, sale.items).catch((err) =>
+        console.error("Inventory deduct (close) error:", err.message)
+      );
+    }
+
     const transformed = transformSale(updated);
-    emitSaleEvent(req, "sale_status_changed", transformed);
+    // Kassa app termal chek bossin
+    emitSaleEvent(req, "new_sale", transformed);
 
     // Sotuvchi balansini yangilash (faqat xizmat haqi qo'shiladi)
     if (updated.sellerId && finalTaxAmount > 0) {

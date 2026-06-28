@@ -1,9 +1,13 @@
+require("dotenv").config();
 const bcrypt = require("bcrypt");
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
 
-process.env.PG_CONNECTION = "postgresql://postgres:QSTKHBSEockHlOpQJOVOFrVlXGToRWYC@shuttle.proxy.rlwy.net:13276/railway";
+if (!process.env.PG_CONNECTION) {
+  console.error("PG_CONNECTION .env da yoki muhitda berilmagan!");
+  process.exit(1);
+}
 
 const pool = new Pool({
   connectionString: process.env.PG_CONNECTION,

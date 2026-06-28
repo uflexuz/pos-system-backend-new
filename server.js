@@ -71,7 +71,7 @@ app.use((req, res, next) => {
       "script-src 'self' 'unsafe-inline'; " +
       "style-src 'self' 'unsafe-inline'; " +
       "img-src 'self' data: https:; " +
-      "connect-src 'self' http://192.168.137.1:8080; " +
+      "connect-src 'self'; " +
       "font-src 'self'; " +
       "object-src 'none'; " +
       "base-uri 'self';",
@@ -96,7 +96,6 @@ app.use("/api/unified", require("./routes/unifiedDashboardRoutes"));
 app.use("/api/sales", require("./routes/salesRoutes"));
 app.use("/api/inventory", require("./routes/inventoryRoutes"));
 app.use("/api/admin-inventory", require("./routes/adminInventoryRoute"));
-app.use("/api/photo", require("./routes/photoRoutes"));
 app.use("/api/branches", require("./routes/branchRoutes"));
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/products", require("./routes/productRoutes"));
