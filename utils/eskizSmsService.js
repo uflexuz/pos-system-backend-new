@@ -22,6 +22,14 @@ function isEskizConfigured() {
   return Boolean(config.email && config.password);
 }
 
+// Global SMS o'chirgich (kill switch).
+// SMS_ENABLED="false" bo'lsa hech qanday SMS jo'natilmaydi — Eskiz akkaunti
+// almashtirilayotgan/shablonlar tayyor bo'lmagan paytda vaqtincha to'xtatish uchun.
+// O'zgaruvchi berilmasa default holatda SMS YOQILGAN bo'ladi.
+function isSmsEnabled() {
+  return String(process.env.SMS_ENABLED ?? "true").trim().toLowerCase() !== "false";
+}
+
 function normalizePhoneNumber(phoneNumber = "") {
   const digits = String(phoneNumber).replace(/\D/g, "");
   if (digits.length === 9) return `998${digits}`;
@@ -86,6 +94,16 @@ function invalidateEskizToken() {
 async function sendEskizSms({ phoneNumber, message }, forceTokenRefresh = false) {
   const config = getEskizConfig();
   const mobilePhone = normalizePhoneNumber(phoneNumber);
+
+  // SMS vaqtincha o'chirilgan bo'lsa — Eskizga umuman murojaat qilmaymiz.
+  if (!isSmsEnabled()) {
+    return {
+      success: false,
+      skipped: true,
+      error: "SMS vaqtincha o'chirilgan (SMS_ENABLED=false)",
+      mobilePhone,
+    };
+  }
 
   if (!/^998\d{9}$/.test(mobilePhone)) {
     return {
@@ -267,5 +285,6 @@ module.exports = {
   getEskizTemplates,
   getEskizTemplateById,
   isEskizConfigured,
+  isSmsEnabled,
   normalizePhoneNumber,
 };
