@@ -158,6 +158,31 @@ app.get("/api/health/db", async (req, res) => {
   }
 });
 
+// Prisma + jadvallar tashxisi — login osilishi Prisma'dami yoki migratsiya
+// qilinmaganidami ekanini aniqlaydi. Har bir jadval count'i (8s timeout).
+app.get("/api/health/prisma", async (req, res) => {
+  const prismaClient = app.get("prisma");
+  const withTimeout = (p, ms = 8000) =>
+    Promise.race([
+      p,
+      new Promise((_r, rej) =>
+        setTimeout(() => rej(new Error(`timeout ${ms}ms`)), ms),
+      ),
+    ]);
+
+  const out = {};
+  for (const model of ["admin", "worker", "branch", "product", "category"]) {
+    try {
+      out[model] = await withTimeout(prismaClient[model].count());
+    } catch (error) {
+      out[model] = `XATO: ${error.message}`;
+    }
+  }
+
+  const allOk = Object.values(out).every((v) => typeof v === "number");
+  res.status(allOk ? 200 : 503).json({ prisma: allOk ? "ok" : "muammo", counts: out });
+});
+
 // Static files (1 kun cache bilan — takroriy yuklashlarni tezlashtiradi).
 app.use(express.static("public", { maxAge: "1d" }));
 

@@ -15,6 +15,7 @@
     "seed:customers:csv": "node seeds/seedCustomersFromCsv.js ../mijoz.csv",
     "seed:sms:csv": "node seeds/seedSmsFromCsv.js",
     "seed:catalog": "node seeds/seedUniversalCatalog.js",
+    "seed:mock": "node seeds/seedMockData.js",
     "seed:admin": "node seeds/seedAdmin.js",
     "backup:now": "node -e \"require('./utils/dbBackupScheduler').runBackup()\""
   },

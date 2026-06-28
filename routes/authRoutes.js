@@ -6,8 +6,12 @@ const {
   isDatabaseConnectionError,
   sendDatabaseUnavailable,
 } = require("../utils/databaseError");
+const { withTimeout } = require("../utils/withTimeout");
 
 const router = express.Router();
+
+// DB so'rovi 8s dan oshsa toza xato — login hech qachon osilib qolmaydi.
+const DB_TIMEOUT_MS = 8000;
 
 async function getManagedBranchId(adminId) {
   if (!adminId) return null;
@@ -21,14 +25,18 @@ async function getManagedBranchId(adminId) {
 }
 
 async function handleWorkerLogin(phone, password, res) {
-  const worker = await prisma.worker.findFirst({
-    where: { phone },
-    include: {
-      branch: {
-        select: { id: true, name: true },
+  const worker = await withTimeout(
+    prisma.worker.findFirst({
+      where: { phone },
+      include: {
+        branch: {
+          select: { id: true, name: true },
+        },
       },
-    },
-  });
+    }),
+    DB_TIMEOUT_MS,
+    "worker login so'rovi"
+  );
 
   if (!worker) {
     return res.status(401).json({
@@ -71,7 +79,11 @@ async function handleWorkerLogin(phone, password, res) {
 }
 
 async function handleAdminLogin(phone, password, res) {
-  const admin = await prisma.admin.findUnique({ where: { phone } });
+  const admin = await withTimeout(
+    prisma.admin.findUnique({ where: { phone } }),
+    DB_TIMEOUT_MS,
+    "admin login so'rovi"
+  );
 
   if (!admin || admin.isDeleted) {
     return res.status(401).json({
@@ -140,8 +152,12 @@ router.post("/login", async (req, res) => {
   } catch (error) {
     console.error("Login error:", error.message);
 
-    if (isDatabaseConnectionError(error)) {
-      return sendDatabaseUnavailable(res);
+    if (error.isTimeout || isDatabaseConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        message:
+          "Ma'lumotlar bazasi vaqtincha javob bermayapti. Birozdan so'ng qayta urinib ko'ring.",
+      });
     }
 
     return res.status(500).json({
