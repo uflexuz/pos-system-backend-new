@@ -17,6 +17,8 @@
     "seed:catalog": "node seeds/seedUniversalCatalog.js",
     "seed:mock": "node seeds/seedMockData.js",
     "seed:admin": "node seeds/seedAdmin.js",
+    "reset:data": "node seeds/resetData.js",
+    "reset:data:confirm": "RESET_CONFIRM=true node seeds/resetData.js",
     "backup:now": "node -e \"require('./utils/dbBackupScheduler').runBackup()\""
   },
   "dependencies": {
