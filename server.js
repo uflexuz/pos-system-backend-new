@@ -189,6 +189,7 @@ app.use(express.static("public", { maxAge: "1d" }));
 // API routes
 app.use("/api/admin", require("./routes/authRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
+app.use("/api/admin/settings", require("./routes/settingsRoutes").router);
 app.use("/api/worker", require("./routes/authRoutes"));
 app.use("/api/transactions", require("./routes/transactionRoutes"));
 app.use("/api/dashboard", require("./routes/dashboardRoutes"));

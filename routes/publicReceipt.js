@@ -5,6 +5,7 @@
 const express = require("express");
 const prisma = require("../config/prisma");
 const { publicBaseUrl } = require("../utils/publicUrl");
+const { getSocialSettings } = require("./settingsRoutes");
 
 const router = express.Router();
 
@@ -36,7 +37,29 @@ function productImageUrl(base, product) {
   return "";
 }
 
-function renderReceiptPage(sale, base) {
+// Hardcoded default ijtimoiy tarmoq havolalari.
+// Bosqich 2'da admindan o'zgartirilsa, DB qiymati shularni almashtiradi.
+// TODO: haqiqiy havolalarni qo'ying (yoki admin sozlamasidan kiriting).
+const SOCIAL_DEFAULTS = {
+  telegram: "https://t.me/uflexpos",
+  instagram: "https://instagram.com/uflexpos",
+};
+
+const TG_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71l-4.14-3.05-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>';
+const IG_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="#fff"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 01-1.38-.9 3.7 3.7 0 01-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.17 8.8 2.16 12 2.16zm0 3.68A6.16 6.16 0 1018.16 12 6.16 6.16 0 0012 5.84zm0 10.16A4 4 0 1116 12a4 4 0 01-4 4zm6.41-10.4a1.44 1.44 0 11-1.44-1.44 1.44 1.44 0 011.44 1.44z"/></svg>';
+
+function socialButtonsHtml(social) {
+  const btns = [];
+  if (social.telegram) {
+    btns.push(`<a class="sbtn tg" href="${esc(social.telegram)}" target="_blank" rel="noopener noreferrer">${TG_ICON}<span>Telegram</span></a>`);
+  }
+  if (social.instagram) {
+    btns.push(`<a class="sbtn ig" href="${esc(social.instagram)}" target="_blank" rel="noopener noreferrer">${IG_ICON}<span>Instagram</span></a>`);
+  }
+  return btns.length ? `<div class="social">${btns.join("")}</div>` : "";
+}
+
+function renderReceiptPage(sale, base, social = SOCIAL_DEFAULTS) {
   const dt = new Date(sale.saleDate || sale.createdAt || Date.now());
   const pad = (x) => String(x).padStart(2, "0");
   const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
@@ -70,6 +93,12 @@ function renderReceiptPage(sale, base) {
   .amt{font-weight:600;font-size:14px;white-space:nowrap}
   .row{display:flex;justify-content:space-between;font-size:14px;padding:3px 0}
   .total{font-size:20px;font-weight:700;color:#0a7} .red{color:#e33}
+  .social{display:flex;gap:10px;justify-content:center;margin-top:14px}
+  .sbtn{flex:1;max-width:200px;display:flex;align-items:center;justify-content:center;gap:7px;padding:12px;border-radius:11px;font-weight:600;font-size:14px;text-decoration:none;color:#fff}
+  .sbtn svg{flex:0 0 auto}
+  .sbtn.tg{background:#229ED9}
+  .sbtn.ig{background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)}
+  .credit{text-align:center;font-size:8px;line-height:1.4;color:#9aa0a6;margin-top:16px;padding-bottom:12px}
 </style></head><body><div class="wrap"><div class="card">
   <h1>${esc(sale.branch?.name || "UFLEX POS")}</h1>
   <div class="muted">Chek ${esc(sale.saleNumber || "")} &middot; ${esc(dateStr)}</div>
@@ -81,6 +110,8 @@ function renderReceiptPage(sale, base) {
   <div class="row total"><span>To'lov:</span><span>${fmtSom(sale.total)} so'm</span></div>
   <div class="muted" style="margin-top:8px">To'lov turi: ${esc(ptMap[sale.paymentType] || "Naqd pul")}</div>
 </div><div class="muted" style="text-align:center;margin-top:12px">Xaridingiz uchun rahmat!</div>
+${socialButtonsHtml(social)}
+  <div class="credit">It - xizmatlar va dasturiy taminot ishlab chiqish 99-657-26-00</div>
 </div></body></html>`;
 }
 
@@ -99,8 +130,14 @@ router.get("/r/:saleId", async (req, res) => {
           `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><body style="font-family:system-ui;text-align:center;padding:40px;color:#777">Chek topilmadi</body>`
         );
     }
+    // Admindan sozlangan havolalar; bo'sh bo'lsa hardcoded default ishlatiladi
+    const dbSocial = await getSocialSettings();
+    const social = {
+      telegram: dbSocial.telegram || SOCIAL_DEFAULTS.telegram,
+      instagram: dbSocial.instagram || SOCIAL_DEFAULTS.instagram,
+    };
     res.set("Content-Type", "text/html; charset=utf-8");
-    return res.send(renderReceiptPage(sale, publicBaseUrl(req)));
+    return res.send(renderReceiptPage(sale, publicBaseUrl(req), social));
   } catch (e) {
     console.error("Receipt page error:", e.message);
     return res.status(500).send("Server xatoligi");
