@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const { publicBaseUrl } = require("../utils/publicUrl");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -303,6 +304,7 @@ router.post("/", async (req, res) => {
       branchId, sellerId, waiterId,
       items, discount, discountType, paymentType, paymentDetails,
       tax, taxPercent, taxAmount, notes, saleDate, customerId,
+      printReceipt, printQr,
     } = req.body;
 
     if (!items || !items.length) {
@@ -384,7 +386,13 @@ router.post("/", async (req, res) => {
         console.error("Inventory deduct error:", err.message)
       );
     }
-    emitSaleEvent(req, "new_sale", transformed);
+    const receiptUrl = `${publicBaseUrl(req)}/r/${sale.id}`;
+    emitSaleEvent(req, "new_sale", {
+      ...transformed,
+      printReceipt: printReceipt !== false,
+      printQr: printQr !== false,
+      receiptUrl,
+    });
 
     return res.status(201).json({ success: true, sale: transformed });
   } catch (error) {
