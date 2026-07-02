@@ -496,6 +496,132 @@ router.post("/:id/cancel", async (req, res) => {
   }
 });
 
+// PUT /:id — Admin: chekni (sotuvni) to'liq tahrirlash (ombor moslashuvi bilan)
+router.put("/:id", async (req, res) => {
+  try {
+    if (!req.user?.adminId) {
+      return res.status(403).json({ message: "Chekni faqat admin tahrirlashi mumkin!" });
+    }
+
+    const { id } = req.params;
+    const {
+      items, discount, discountType, paymentType, paymentDetails, notes, saleDate,
+    } = req.body;
+
+    if (!items || !items.length) {
+      return res.status(400).json({ message: "Mahsulotlar kiritilmagan!" });
+    }
+
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!sale) {
+      return res.status(404).json({ message: "Sotuv topilmadi!" });
+    }
+    if (sale.status === "cancelled") {
+      return res.status(400).json({
+        message: "Bekor qilingan sotuvni tahrirlash mumkin emas! Avval tiklang.",
+      });
+    }
+
+    // Mahsulot ma'lumotlari (nom + zaxira narx)
+    const productIds = items.map((i) => i.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, salePrice: true },
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    let subtotal = 0;
+    const newItems = items.map((item) => {
+      const product = productMap.get(item.productId);
+      if (!product) throw new Error(`Mahsulot topilmadi: ${item.productId}`);
+      const qty = Number(item.quantity);
+      if (!(qty > 0)) throw new Error(`Noto'g'ri miqdor: ${product.name}`);
+      const unitPrice =
+        item.unitPrice != null ? Number(item.unitPrice) : Number(product.salePrice || 0);
+      if (!(unitPrice >= 0)) throw new Error(`Noto'g'ri narx: ${product.name}`);
+      const totalPrice = Math.round(unitPrice * qty * 100) / 100;
+      subtotal += totalPrice;
+      return {
+        id: crypto.randomBytes(12).toString("hex"),
+        saleId: id,
+        productId: item.productId,
+        productName: product.name,
+        quantity: qty,
+        unitPrice,
+        totalPrice,
+      };
+    });
+
+    // Chegirma
+    const finalDiscountType = discountType === "percent" ? "percent" : "amount";
+    const rawDiscount = Number(discount || 0);
+    const discountAmount =
+      finalDiscountType === "percent"
+        ? Math.round((subtotal * rawDiscount) / 100)
+        : Math.round(rawDiscount);
+    const total = Math.max(0, Math.round(subtotal - discountAmount));
+
+    // To'lov
+    const nextPaymentType = paymentType || sale.paymentType || "cash";
+    const paymentData = normalizeSalePayment(nextPaymentType, paymentDetails, total);
+    if (paymentData.error) {
+      return res.status(400).json({ message: paymentData.error });
+    }
+
+    // Ombor: avval eski mahsulotlarni qaytaramiz
+    if (sale.branchId) {
+      await restoreInventory(sale.branchId, sale.items).catch((err) =>
+        console.error("Inventory restore (edit) error:", err.message)
+      );
+    }
+
+    // Itemlarni almashtirish + sotuvni yangilash (atomik)
+    await prisma.$transaction([
+      prisma.saleItem.deleteMany({ where: { saleId: id } }),
+      ...newItems.map((it) => prisma.saleItem.create({ data: it })),
+      prisma.sale.update({
+        where: { id },
+        data: {
+          subtotal,
+          total,
+          discount: discountAmount,
+          discountType: finalDiscountType,
+          tax: false,
+          taxAmount: 0,
+          taxPercent: 0,
+          paymentType: paymentData.paymentType,
+          paymentDetails: paymentData.paymentDetails,
+          notes: notes !== undefined ? notes || null : sale.notes,
+          saleDate: saleDate ? new Date(saleDate) : sale.saleDate,
+          updatedAt: new Date(),
+        },
+      }),
+    ]);
+
+    // Yangi mahsulotlarni ombordan chiqaramiz
+    if (sale.branchId) {
+      await deductInventory(sale.branchId, newItems).catch((err) =>
+        console.error("Inventory deduct (edit) error:", err.message)
+      );
+    }
+
+    const updated = await prisma.sale.findUnique({
+      where: { id },
+      include: fullSaleInclude,
+    });
+    const transformed = transformSale(updated);
+    emitSaleEvent(req, "sale_updated", transformed);
+
+    return res.json({ success: true, sale: transformed });
+  } catch (error) {
+    console.error("Edit sale error:", error.message);
+    return res.status(500).json({ message: error.message || "Server xatoligi!" });
+  }
+});
+
 // Helper: deduct inventory items
 async function deductInventory(branchId, saleItems) {
   const inventories = await prisma.inventory.findMany({
