@@ -36,6 +36,41 @@ async function createProductSku(sku) {
   throw new Error("SKU avtomatik yaratilmadi, qayta urinib ko'ring");
 }
 
+// Boshlang'ich ombor qoldig'ini o'rnatadi: filial inventarini topadi/yaratadi va
+// InventoryItem qo'shadi (kassadan tez mahsulot qo'shishda ishlatiladi).
+async function setInitialStock(branchId, productId, quantity) {
+  const qty = Number(quantity);
+  if (!branchId || !productId || !Number.isFinite(qty) || qty <= 0) return;
+
+  let inventory = await prisma.inventory.findFirst({
+    where: { branchId },
+    select: { id: true },
+  });
+
+  if (!inventory) {
+    inventory = await prisma.inventory.create({
+      data: {
+        id: crypto.randomBytes(12).toString("hex"),
+        branchId,
+      },
+      select: { id: true },
+    });
+  }
+
+  await prisma.inventoryItem.upsert({
+    where: {
+      inventoryId_productId: { inventoryId: inventory.id, productId },
+    },
+    update: { quantity: qty, updatedAt: new Date() },
+    create: {
+      id: crypto.randomBytes(12).toString("hex"),
+      inventoryId: inventory.id,
+      productId,
+      quantity: qty,
+    },
+  });
+}
+
 // Multer — xotirada saqlash (lokal diskka yozilmaydi, to'g'ridan-to'g'ri bucket'ga)
 const MIME_EXT = {
   "image/jpeg": ".jpg",
@@ -218,6 +253,7 @@ router.post("/", authMiddleware, async (req, res) => {
   try {
     const {
       name, category, unit, salePrice, costPrice, image, sku, barcode,
+      initialStock, branchId,
     } = req.body;
 
     const productSku = await createProductSku(sku);
@@ -235,6 +271,14 @@ router.post("/", authMiddleware, async (req, res) => {
         barcode: normalizeBarcode(barcode),
       },
     });
+
+    // Ixtiyoriy: kassadan tez qo'shishda boshlang'ich ombor qoldig'ini yozamiz.
+    // Xato bo'lsa ham mahsulot yaratilgan bo'ladi — sotuvni bloklamaymiz.
+    if (initialStock != null && branchId) {
+      await setInitialStock(branchId, product.id, initialStock).catch((err) =>
+        console.error("Initial stock set error:", err.message)
+      );
+    }
 
     return res.status(201).json(mapProduct(product));
   } catch (error) {

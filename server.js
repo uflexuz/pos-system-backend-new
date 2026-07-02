@@ -202,6 +202,9 @@ app.use("/api/products", require("./routes/productRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
 app.use("/api/sms", require("./routes/smsRoutes"));
 
+// Public (authsiz) raqamli chek sahifasi — QR shu manzilga ishora qiladi (GET /r/:saleId)
+app.use(require("./routes/publicReceipt"));
+
 // Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);

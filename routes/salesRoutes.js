@@ -2,11 +2,12 @@ const express = require("express");
 const crypto = require("crypto");
 const prisma = require("../config/prisma");
 const authMiddleware = require("../middleware/authMiddleware");
+const { publicBaseUrl } = require("../utils/publicUrl");
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const SALE_STATUSES = new Set(["completed", "cancelled", "open"]);
+const SALE_STATUSES = new Set(["completed", "cancelled"]);
 const SALE_PAYMENT_TYPES = new Set(["cash", "card", "mixed"]);
 const APP_TIMEZONE_OFFSET_MINUTES = 5 * 60; // Asia/Tashkent
 
@@ -188,10 +189,6 @@ router.get("/", async (req, res) => {
     if (statusError) {
       return res.status(400).json({ message: statusError });
     }
-    // Ochiq (draft) savdolar tarix ro'yxatida ko'rsatilmaydi (GET /pending dan olinadi)
-    if (!req.query.status) {
-      where.status = { not: "open" };
-    }
     if (req.query.paymentType) where.paymentType = req.query.paymentType;
     if (req.query.search) {
       where.OR = [
@@ -277,33 +274,6 @@ const fullSaleInclude = {
   customer: true,
 };
 
-// GET /pending — Ochiq (draft) savdolar (app "Buyurtmalar" tab uchun)
-// MUHIM: bu route GET /:id dan OLDIN bo'lishi shart
-router.get("/pending", async (req, res) => {
-  try {
-    const where = { status: "open" };
-    if (req.query.branch) where.branchId = req.query.branch;
-    if (req.user?.workerId) where.sellerId = req.user.workerId;
-
-    const sales = await prisma.sale.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: fullSaleInclude,
-    });
-
-    const orders = sales.map((sale) => {
-      const transformed = transformSale(sale);
-      transformed.status = "pending";
-      return transformed;
-    });
-
-    return res.json({ orders, sales: orders });
-  } catch (error) {
-    console.error("Get pending sales error:", error.message);
-    return res.status(500).json({ message: "Server xatoligi!" });
-  }
-});
-
 // GET /:id — Get single sale
 router.get("/:id", async (req, res) => {
   try {
@@ -334,15 +304,12 @@ router.post("/", async (req, res) => {
       branchId, sellerId, waiterId,
       items, discount, discountType, paymentType, paymentDetails,
       tax, taxPercent, taxAmount, notes, saleDate, customerId,
-      status, open,
+      printReceipt, printQr,
     } = req.body;
 
     if (!items || !items.length) {
       return res.status(400).json({ message: "Mahsulotlar kiritilmagan!" });
     }
-
-    // Ochiq (draft) savdo: ombor kamaymaydi, chek bosilmaydi
-    const isDraft = open === true || String(status || "").toLowerCase() === "open";
 
     // Fetch product prices
     const productIds = items.map((i) => i.productId);
@@ -376,13 +343,9 @@ router.post("/", async (req, res) => {
     const discountAmount = discount || 0;
     const total = Math.max(0, Math.round(subtotalWithTax - discountAmount));
 
-    // Draft uchun to'lov tekshirilmaydi
-    let paymentData = { paymentType: null, paymentDetails: null };
-    if (!isDraft) {
-      paymentData = normalizeSalePayment(paymentType, paymentDetails, total);
-      if (paymentData.error) {
-        return res.status(400).json({ message: paymentData.error });
-      }
+    const paymentData = normalizeSalePayment(paymentType, paymentDetails, total);
+    if (paymentData.error) {
+      return res.status(400).json({ message: paymentData.error });
     }
 
     const saleNumber = await generateSaleNumber();
@@ -406,7 +369,7 @@ router.post("/", async (req, res) => {
         taxPercent: taxPercent || 0,
         paymentType: paymentData.paymentType,
         paymentDetails: paymentData.paymentDetails,
-        status: isDraft ? "open" : "completed",
+        status: "completed",
         notes: notes || null,
         customerId: customerId || null,
         items: {
@@ -418,104 +381,22 @@ router.post("/", async (req, res) => {
 
     const transformed = transformSale(sale);
 
-    // Draft bo'lsa: ombor kamaymaydi, chek bosilmaydi
-    if (!isDraft) {
-      if (branchId) {
-        await deductInventory(branchId, saleItems).catch((err) =>
-          console.error("Inventory deduct error:", err.message)
-        );
-      }
-      emitSaleEvent(req, "new_sale", transformed);
+    if (branchId) {
+      await deductInventory(branchId, saleItems).catch((err) =>
+        console.error("Inventory deduct error:", err.message)
+      );
     }
+    const receiptUrl = `${publicBaseUrl(req)}/r/${sale.id}`;
+    emitSaleEvent(req, "new_sale", {
+      ...transformed,
+      printReceipt: printReceipt !== false,
+      printQr: printQr !== false,
+      receiptUrl,
+    });
 
     return res.status(201).json({ success: true, sale: transformed });
   } catch (error) {
     console.error("Create sale error:", error.message);
-    return res.status(500).json({ message: error.message || "Server xatoligi!" });
-  }
-});
-
-// PUT /:id/edit-items — Replace items on a sale
-router.put("/:id/edit-items", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { items } = req.body;
-
-    if (!items || !items.length) {
-      return res.status(400).json({ message: "Mahsulotlar kiritilmagan!" });
-    }
-
-    const sale = await prisma.sale.findUnique({
-      where: { id },
-      include: { items: true },
-    });
-    if (!sale) {
-      return res.status(404).json({ message: "Sotuv topilmadi!" });
-    }
-    if (sale.status === "completed" || sale.status === "cancelled") {
-      return res.status(400).json({ message: "Tugallangan yoki bekor qilingan sotuvni tahrirlash mumkin emas!" });
-    }
-
-    // Fetch product data
-    const productIds = items.map((i) => i.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, name: true, salePrice: true },
-    });
-    const productMap = new Map(products.map((p) => [p.id, p]));
-
-    let subtotal = 0;
-    const newItems = items.map((item) => {
-      const product = productMap.get(item.productId);
-      if (!product) throw new Error(`Mahsulot topilmadi: ${item.productId}`);
-      const unitPrice = Number(product.salePrice || 0);
-      const totalPrice = Math.round(unitPrice * item.quantity * 100) / 100;
-      subtotal += totalPrice;
-      return {
-        id: crypto.randomBytes(12).toString("hex"),
-        saleId: id,
-        productId: item.productId,
-        productName: product.name,
-        quantity: item.quantity,
-        unitPrice,
-        totalPrice,
-      };
-    });
-
-    // Restore inventory for old items, deduct for new items
-    if (sale.branchId) {
-      await restoreInventory(sale.branchId, sale.items).catch((err) =>
-        console.error("Inventory restore (edit-items) error:", err.message)
-      );
-    }
-
-    // Delete old items and create new ones
-    await prisma.$transaction([
-      prisma.saleItem.deleteMany({ where: { saleId: id } }),
-      ...newItems.map((item) => prisma.saleItem.create({ data: item })),
-      prisma.sale.update({
-        where: { id },
-        data: { subtotal, total: subtotal, updatedAt: new Date() },
-      }),
-    ]);
-
-    if (sale.branchId) {
-      await deductInventory(sale.branchId, newItems).catch((err) =>
-        console.error("Inventory deduct (edit-items) error:", err.message)
-      );
-    }
-
-    const updated = await prisma.sale.findUnique({
-      where: { id },
-      include: fullSaleInclude,
-    });
-
-    const transformed = transformSale(updated);
-    emitSaleEvent(req, "sale_status_changed", transformed);
-
-    return res.json({ success: true, sale: transformed });
-  } catch (error) {
-    console.error("Edit items error:", error.message);
     return res.status(500).json({ message: error.message || "Server xatoligi!" });
   }
 });
@@ -567,110 +448,6 @@ router.patch("/:id/status", async (req, res) => {
     return res.json({ success: true, sale: transformed });
   } catch (error) {
     console.error("Update status error:", error.message);
-    return res.status(500).json({ message: "Server xatoligi!" });
-  }
-});
-
-// POST /:id/close — Close/finalize a sale
-router.post("/:id/close", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { paymentType, paymentDetails, discount, discountType, tax, taxPercent, taxAmount } = req.body;
-
-    const sale = await prisma.sale.findUnique({
-      where: { id },
-      include: { items: true },
-    });
-    if (!sale) {
-      return res.status(404).json({ message: "Sotuv topilmadi!" });
-    }
-    if (sale.status === "completed") {
-      return res.status(400).json({ message: "Sotuv allaqachon yopilgan!" });
-    }
-    if (sale.status === "cancelled") {
-      return res.status(400).json({ message: "Bekor qilingan sotuvni yopish mumkin emas!" });
-    }
-
-    const subtotal = Number(sale.subtotal || 0);
-    const finalTax = tax !== undefined ? tax : sale.tax;
-    const finalTaxPercent = taxPercent != null ? taxPercent : Number(sale.taxPercent || 0);
-    const calcTaxAmt = finalTax ? Math.round(subtotal * finalTaxPercent / 100) : 0;
-    const finalTaxAmount = taxAmount != null ? taxAmount : calcTaxAmt;
-    const subtotalWithTax = subtotal + finalTaxAmount;
-
-    const finalDiscount = discount != null ? discount : Number(sale.discount || 0);
-    const finalDiscountType = discountType || sale.discountType || "amount";
-
-    let discountAmount = finalDiscount;
-    if (finalDiscountType === "percent") {
-      discountAmount = Math.round(subtotalWithTax * finalDiscount / 100);
-    }
-
-    const total = Math.max(0, Math.round(subtotalWithTax - discountAmount));
-
-    const defaultPaymentType = sale.paymentType === "credit" ? "cash" : sale.paymentType;
-    const nextPaymentType = paymentType || defaultPaymentType || "cash";
-    const nextPaymentDetails =
-      paymentDetails !== undefined
-        ? paymentDetails
-        : nextPaymentType === "mixed"
-        ? sale.paymentDetails
-        : null;
-    const paymentData = normalizeSalePayment(
-      nextPaymentType,
-      nextPaymentDetails,
-      total
-    );
-    if (paymentData.error) {
-      return res.status(400).json({ message: paymentData.error });
-    }
-
-    const updated = await prisma.sale.update({
-      where: { id },
-      data: {
-        status: "completed",
-        paymentType: paymentData.paymentType,
-        paymentDetails: paymentData.paymentDetails,
-        discount: discountAmount,
-        discountType: finalDiscountType === "percent" ? "percent" : "amount",
-        tax: finalTax,
-        taxPercent: finalTaxPercent,
-        taxAmount: finalTaxAmount,
-        total,
-        updatedAt: new Date(),
-      },
-      include: fullSaleInclude,
-    });
-
-    // Draft yopilganda ombor endi kamayadi (oddiy savdoda POST / da kamaygan)
-    if (sale.branchId) {
-      await deductInventory(sale.branchId, sale.items).catch((err) =>
-        console.error("Inventory deduct (close) error:", err.message)
-      );
-    }
-
-    const transformed = transformSale(updated);
-    // Kassa app termal chek bossin
-    emitSaleEvent(req, "new_sale", transformed);
-
-    // Sotuvchi balansini yangilash (faqat xizmat haqi qo'shiladi)
-    if (updated.sellerId && finalTaxAmount > 0) {
-      try {
-        await prisma.worker.update({
-          where: { id: updated.sellerId },
-          data: {
-            balance: { increment: finalTaxAmount },
-            updatedAt: new Date(),
-          },
-        });
-      } catch (balanceErr) {
-        console.error("Seller balance update error:", balanceErr.message);
-      }
-    }
-
-    return res.json({ success: true, sale: transformed });
-  } catch (error) {
-    console.error("Close sale error:", error.message);
     return res.status(500).json({ message: "Server xatoligi!" });
   }
 });
