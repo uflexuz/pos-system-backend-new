@@ -452,8 +452,8 @@ router.patch("/:id/status", async (req, res) => {
   }
 });
 
-// POST /:id/cancel — Cancel a sale
-router.post("/:id/cancel", async (req, res) => {
+// Sotuvni bekor qilish — admin panel /cancel, POS ilovasi /return nomi bilan chaqiradi
+async function cancelSaleHandler(req, res) {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -494,7 +494,10 @@ router.post("/:id/cancel", async (req, res) => {
     console.error("Cancel sale error:", error.message);
     return res.status(500).json({ message: "Server xatoligi!" });
   }
-});
+}
+
+router.post("/:id/cancel", cancelSaleHandler);
+router.post("/:id/return", cancelSaleHandler);
 
 // PUT /:id — Admin: chekni (sotuvni) to'liq tahrirlash (ombor moslashuvi bilan)
 router.put("/:id", async (req, res) => {
